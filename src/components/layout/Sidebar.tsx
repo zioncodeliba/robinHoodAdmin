@@ -9,7 +9,8 @@ import {
   Users,
 } from 'lucide-react'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
-import { currentUser } from '@/lib/mock-data'
+import { getCurrentAdminProfile } from '@/lib/admin-profile'
+import { clearAuth } from '@/lib/auth-storage'
 import { cn } from '@/lib/utils'
 
 interface NavItemConfig {
@@ -66,6 +67,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNavClick, className }: SidebarProps) {
+  const currentAdmin = getCurrentAdminProfile()
   return (
     <aside
       className={cn(
@@ -98,11 +100,11 @@ export function Sidebar({ onNavClick, className }: SidebarProps) {
         <div className="flex items-center justify-between rounded-2xl px-3 py-2.5">
           <div className="flex min-w-0 items-center gap-3">
             <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-white text-xs font-semibold">
-              {currentUser.name.split(' ').map((n) => n[0]).join('')}
+              {currentAdmin.name.split(' ').map((n) => n[0]).join('')}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-[var(--color-text)]">{currentUser.name}</p>
-              <p className="truncate text-xs text-[var(--color-text-muted)]">{currentUser.email}</p>
+              <p className="truncate text-sm font-medium text-[var(--color-text)]">{currentAdmin.name}</p>
+              <p className="truncate text-xs text-[var(--color-text-muted)]">{currentAdmin.email}</p>
             </div>
           </div>
         </div>
@@ -118,7 +120,13 @@ export function Sidebar({ onNavClick, className }: SidebarProps) {
           </div>
         </Link>
 
-        <button className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)] hover:text-[var(--color-text)]">
+        <button
+          onClick={() => {
+            clearAuth()
+            window.location.reload()
+          }}
+          className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)] hover:text-[var(--color-text)]"
+        >
           <div className="flex items-center gap-3">
             <AnimatedIcon icon={LogOut} size={18} variant="lift" />
             <span>התנתקות</span>

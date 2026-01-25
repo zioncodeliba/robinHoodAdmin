@@ -682,18 +682,27 @@ export function Meetings() {
                 {visibleMeetings.map((m) => {
                   const s = new Date(m.start)
                   const e = new Date(m.end)
+                  const timeStart = s.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+                  const timeEnd = e.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+                  const timeRange = `${timeStart} - ${timeEnd}`
+                  const timeRangeCompact = `${timeStart}-${timeEnd}`
                   const top = clamp(((s.getHours() * 60 + s.getMinutes()) - dayStartMin) * pxPerMin, 0, gridHeight)
                   const durationPx =
                     ((e.getHours() * 60 + e.getMinutes()) - (s.getHours() * 60 + s.getMinutes())) * pxPerMin
                   const height = clamp(durationPx, 24, 420)
                   const compact = height < 96
                   const tiny = height < 64
-                  const cardPadding = tiny ? 'p-1' : compact ? 'p-1.5' : 'p-2.5'
-                  const gapClass = compact ? 'gap-0.5' : 'gap-1'
-                  const titleClass = compact ? 'text-xs' : 'text-sm'
+                  const micro = height < 44
+                  const cardPadding = micro ? 'p-0.5' : tiny ? 'p-1' : compact ? 'p-1.5' : 'p-2.5'
+                  const gapClass = micro ? 'gap-0' : compact ? 'gap-0.5' : 'gap-1'
+                  const rowGapClass = micro ? 'gap-1' : 'gap-1.5'
+                  const titleClass = micro ? 'text-[10px] leading-[1.1]' : compact ? 'text-xs' : 'text-sm'
                   const titleClamp = compact ? 'line-clamp-1' : 'line-clamp-2'
-                  const metaClass = compact ? 'text-[10px]' : 'text-xs'
-                  const pillClass = compact ? 'text-[8px]' : 'text-[9px]'
+                  const metaClass = micro ? 'text-[9px] leading-[1.1]' : compact ? 'text-[10px]' : 'text-xs'
+                  const pillClass = micro ? 'text-[7px] leading-none' : compact ? 'text-[8px]' : 'text-[9px]'
+                  const pillPaddingClass = micro ? 'px-1 py-0' : 'px-1.5 py-0.5'
+                  const showMeta = height >= 32
+                  const useCompactMeta = height < 56
                   
                   // Calculate overlap positioning
                   const { hasOverlap, index, total } = getMeetingOverlapInfo(m, visibleMeetings)
@@ -724,24 +733,27 @@ export function Meetings() {
                       onMouseLeave={() => setHoveredMeetingId(null)}
                     >
                       <div dir="rtl" className={`flex flex-col text-right overflow-hidden ${gapClass}`}>
-                        <div className="flex flex-row-reverse items-start gap-1.5">
-                          {!tiny && (
-                            <span className={`shrink-0 inline-flex rounded-full px-1.5 py-0.5 font-semibold ${pillClass} ${statusPill[m.status]}`}>
+                        <div className={`flex flex-row-reverse items-start ${rowGapClass}`}>
+                          <span className={`shrink-0 inline-flex rounded-full font-semibold ${pillPaddingClass} ${pillClass} ${statusPill[m.status]}`}>
                             {statusLabel[m.status]}
-                            </span>
-                          )}
+                          </span>
                           <span className={`flex-1 min-w-0 font-bold leading-tight text-[var(--color-text)] ${titleClass} ${titleClamp}`}>
                             {m.title}
                           </span>
                         </div>
-                        {!tiny && (
-                          <div className={`${metaClass} text-[var(--color-text-muted)] truncate`}>{m.userName}</div>
-                        )}
-                        {!tiny && (
-                          <div dir="ltr" className={`${metaClass} text-[var(--color-text-muted)]`}>
-                            {s.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} - {e.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                        {showMeta && useCompactMeta ? (
+                          <div className={`flex items-center gap-1 ${metaClass} text-[var(--color-text-muted)]`}>
+                            <span className="min-w-0 flex-1 truncate">{m.userName}</span>
+                            <span dir="ltr" className="shrink-0">{timeRangeCompact}</span>
                           </div>
-                        )}
+                        ) : showMeta ? (
+                          <>
+                            <div className={`${metaClass} text-[var(--color-text-muted)] truncate`}>{m.userName}</div>
+                            <div dir="ltr" className={`${metaClass} text-[var(--color-text-muted)]`}>
+                              {timeRange}
+                            </div>
+                          </>
+                        ) : null}
                         {!compact && m.notes && !hasOverlap ? (
                           <div className="mt-1 text-[11px] leading-tight text-[var(--color-text-muted)] line-clamp-2">
                             {m.notes}
@@ -850,18 +862,27 @@ export function Meetings() {
                     {dayMeetings.map((m) => {
                       const s = new Date(m.start)
                       const e = new Date(m.end)
+                      const timeStart = s.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+                      const timeEnd = e.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+                      const timeRange = `${timeStart} - ${timeEnd}`
+                      const timeRangeCompact = `${timeStart}-${timeEnd}`
                       const top = clamp(((s.getHours() * 60 + s.getMinutes()) - dayStartMin) * pxPerMin, 0, gridHeight)
                       const durationPx =
                         ((e.getHours() * 60 + e.getMinutes()) - (s.getHours() * 60 + s.getMinutes())) * pxPerMin
                       const height = clamp(durationPx, 24, 420)
                       const compact = height < 88
                       const tiny = height < 56
-                      const cardPadding = tiny ? 'p-1' : compact ? 'p-1.5' : 'p-2'
-                      const gapClass = compact ? 'gap-0.5' : 'gap-1'
-                      const titleClass = compact ? 'text-[11px]' : 'text-xs'
+                      const micro = height < 40
+                      const cardPadding = micro ? 'p-0.5' : tiny ? 'p-1' : compact ? 'p-1.5' : 'p-2'
+                      const gapClass = micro ? 'gap-0' : compact ? 'gap-0.5' : 'gap-1'
+                      const rowGapClass = micro ? 'gap-0.5' : 'gap-1'
+                      const titleClass = micro ? 'text-[9px] leading-[1.1]' : compact ? 'text-[11px]' : 'text-xs'
                       const titleClamp = compact ? 'line-clamp-1' : 'line-clamp-2'
-                      const metaClass = compact ? 'text-[9px]' : 'text-[10px]'
-                      const pillClass = compact ? 'text-[7px]' : 'text-[8px]'
+                      const metaClass = micro ? 'text-[8px] leading-[1.1]' : compact ? 'text-[9px]' : 'text-[10px]'
+                      const pillClass = micro ? 'text-[6px] leading-none' : compact ? 'text-[7px]' : 'text-[8px]'
+                      const pillPaddingClass = micro ? 'px-1 py-0' : 'px-1.5 py-0.5'
+                      const showMeta = height >= 30
+                      const useCompactMeta = height < 48
                       
                       // Calculate overlap positioning
                       const { hasOverlap, index, total } = getMeetingOverlapInfo(m, dayMeetings)
@@ -892,24 +913,27 @@ export function Meetings() {
                           onMouseLeave={() => setHoveredMeetingId(null)}
                         >
                           <div dir="rtl" className={`flex flex-col text-right overflow-hidden ${gapClass}`}>
-                            <div className="flex flex-row-reverse items-start gap-1">
-                              {!tiny && (
-                                <span className={`shrink-0 inline-flex rounded-full px-1.5 py-0.5 font-semibold ${pillClass} ${statusPill[m.status]}`}>
-                                  {statusLabel[m.status]}
-                                </span>
-                              )}
+                            <div className={`flex flex-row-reverse items-start ${rowGapClass}`}>
+                              <span className={`shrink-0 inline-flex rounded-full font-semibold ${pillPaddingClass} ${pillClass} ${statusPill[m.status]}`}>
+                                {statusLabel[m.status]}
+                              </span>
                               <span className={`flex-1 min-w-0 font-bold leading-tight text-[var(--color-text)] ${titleClass} ${titleClamp}`}>
                                 {m.title}
                               </span>
                             </div>
-                            {!tiny && (
-                              <div className={`${metaClass} text-[var(--color-text-muted)] truncate`}>{m.userName}</div>
-                            )}
-                            {!tiny && (
-                              <div dir="ltr" className={`${metaClass} text-[var(--color-text-muted)]`}>
-                                {s.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} - {e.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                            {showMeta && useCompactMeta ? (
+                              <div className={`flex items-center gap-1 ${metaClass} text-[var(--color-text-muted)]`}>
+                                <span className="min-w-0 flex-1 truncate">{m.userName}</span>
+                                <span dir="ltr" className="shrink-0">{timeRangeCompact}</span>
                               </div>
-                            )}
+                            ) : showMeta ? (
+                              <>
+                                <div className={`${metaClass} text-[var(--color-text-muted)] truncate`}>{m.userName}</div>
+                                <div dir="ltr" className={`${metaClass} text-[var(--color-text-muted)]`}>
+                                  {timeRange}
+                                </div>
+                              </>
+                            ) : null}
                             {!compact && m.notes && !hasOverlap ? (
                               <div className="mt-0.5 text-[9px] leading-tight text-[var(--color-text-muted)] line-clamp-1">
                                 {m.notes}

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Lock, User, Plus, Trash2, Save, MessageSquare, Edit2 } from 'lucide-react'
 
@@ -8,9 +9,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { DropdownSelect } from '@/components/ui/dropdown-select'
-import { currentUser } from '@/lib/mock-data'
+import { getCurrentAdminProfile } from '@/lib/admin-profile'
+import { changeAdminPassword, updateAdminProfile } from '@/lib/admin-profile-api'
+import { createAdmin, fetchAdmins, removeAdmin, type AdminUser } from '@/lib/admins-api'
+import { clearAuth, updateStoredUser } from '@/lib/auth-storage'
 import { formatShortDate } from '@/lib/utils'
 import { useMessages } from '@/lib/messages-store'
+import type { Gender } from '@/lib/auth-api'
 import type { LeadStatus, MessageTemplate } from '@/types'
 
 const leadStatusOptions: { value: LeadStatus; label: string }[] = [
@@ -25,12 +30,10 @@ const leadStatusOptions: { value: LeadStatus; label: string }[] = [
   { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
 ]
 
-type AdminUser = {
-  id: string
-  name: string
-  email: string
-  createdAt: string
-}
+const genderOptions: { value: Gender; label: string }[] = [
+  { value: 'male', label: 'גבר' },
+  { value: 'female', label: 'אישה' },
+]
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -45,10 +48,15 @@ function Section({ title, description, children }: { title: string; description?
 }
 
 export function Settings() {
+  const navigate = useNavigate()
+  const currentAdmin = getCurrentAdminProfile()
+  const currentUsername = currentAdmin.username ?? ''
   const [profile, setProfile] = useState({
-    name: currentUser.name,
-    email: currentUser.email,
+    name: currentAdmin.name,
+    email: currentAdmin.email,
+    username: currentUsername,
   })
+  const [profileSaving, setProfileSaving] = useState(false)
 
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [passwordForm, setPasswordForm] = useState({
@@ -56,18 +64,40 @@ export function Settings() {
     newPassword: '',
     confirm: '',
   })
+  const [passwordSaving, setPasswordSaving] = useState(false)
 
   // Admin users state
-  const [admins, setAdmins] = useState<AdminUser[]>([
-    { id: '1', name: 'אדמין ראשי', email: 'admin@robin.co.il', createdAt: '2024-01-01' },
-    { id: '2', name: 'שירה כהן', email: 'shira@robin.co.il', createdAt: '2024-06-15' },
-  ])
+  const [admins, setAdmins] = useState<AdminUser[]>([])
+  const [adminsLoading, setAdminsLoading] = useState(false)
   const [addAdminOpen, setAddAdminOpen] = useState(false)
-  const [addAdminForm, setAddAdminForm] = useState({ name: '', email: '', password: '' })
+  const [addAdminForm, setAddAdminForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    gender: 'male' as Gender,
+  })
+  const [isAddingAdmin, setIsAddingAdmin] = useState(false)
+  const [isDeletingAdmin, setIsDeletingAdmin] = useState(false)
   const [deleteAdminConfirm, setDeleteAdminConfirm] = useState<{ open: boolean; adminId: string | null }>({
     open: false,
     adminId: null,
   })
+
+  const loadAdmins = useCallback(async () => {
+    setAdminsLoading(true)
+    try {
+      const data = await fetchAdmins()
+      setAdmins(data)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת משתמשי אדמין')
+    } finally {
+      setAdminsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadAdmins()
+  }, [loadAdmins])
 
   // Message templates state
   const { templates, addTemplate, updateTemplate, deleteTemplate } = useMessages()
@@ -84,7 +114,65 @@ export function Settings() {
     templateId: null,
   })
 
-  const handlePasswordChange = () => {
+  const splitName = (fullName: string) => {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean)
+    const firstName = parts.shift() ?? ''
+    const lastName = parts.join(' ')
+    return { firstName, lastName }
+  }
+
+  const handleProfileSave = async () => {
+    if (!profile.name.trim()) {
+      toast.error('הזינו שם מלא')
+      return
+    }
+    if (!profile.username.trim()) {
+      toast.error('הזינו שם משתמש')
+      return
+    }
+    if (!profile.email.trim() || !profile.email.includes('@')) {
+      toast.error('הזינו אימייל תקין')
+      return
+    }
+
+    const { firstName, lastName } = splitName(profile.name)
+
+    try {
+      setProfileSaving(true)
+      const updated = await updateAdminProfile({
+        first_name: firstName,
+        last_name: lastName,
+        mail: profile.email.trim(),
+        username: profile.username.trim(),
+      })
+      const usernameChanged = updated.username !== currentUsername
+      if (usernameChanged) {
+        toast.success('שם המשתמש עודכן. יש להתחבר מחדש.')
+        clearAuth()
+        navigate('/login', { replace: true })
+        return
+      }
+      updateStoredUser({
+        firstName: updated.first_name,
+        lastName: updated.last_name,
+        mail: updated.mail,
+        username: updated.username,
+      })
+      setProfile({
+        name: [updated.first_name, updated.last_name].filter(Boolean).join(' ').trim(),
+        email: updated.mail,
+        username: updated.username,
+      })
+      await loadAdmins()
+      toast.success('הפרטים נשמרו בהצלחה')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת פרטים')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const handlePasswordChange = async () => {
     if (!passwordForm.current) {
       toast.error('הזינו סיסמה נוכחית')
       return
@@ -97,12 +185,23 @@ export function Settings() {
       toast.error('הסיסמאות אינן תואמות')
       return
     }
-    toast.success('הסיסמה עודכנה בהצלחה (דמו)')
-    setPasswordOpen(false)
-    setPasswordForm({ current: '', newPassword: '', confirm: '' })
+    try {
+      setPasswordSaving(true)
+      await changeAdminPassword({
+        current_password: passwordForm.current,
+        new_password: passwordForm.newPassword,
+      })
+      toast.success('הסיסמה עודכנה בהצלחה')
+      setPasswordOpen(false)
+      setPasswordForm({ current: '', newPassword: '', confirm: '' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון סיסמה')
+    } finally {
+      setPasswordSaving(false)
+    }
   }
 
-  const handleAddAdmin = () => {
+  const handleAddAdmin = async () => {
     if (!addAdminForm.name.trim()) {
       toast.error('הזינו שם')
       return
@@ -116,25 +215,42 @@ export function Settings() {
       return
     }
 
-    const newAdmin: AdminUser = {
-      id: `admin-${Date.now()}`,
-      name: addAdminForm.name.trim(),
-      email: addAdminForm.email.trim(),
-      createdAt: new Date().toISOString().slice(0, 10),
+    const { firstName, lastName } = splitName(addAdminForm.name)
+    try {
+      setIsAddingAdmin(true)
+      await createAdmin({
+        firstName,
+        lastName,
+        email: addAdminForm.email.trim(),
+        password: addAdminForm.password,
+        gender: addAdminForm.gender,
+      })
+      await loadAdmins()
+      toast.success('משתמש אדמין נוסף בהצלחה')
+      setAddAdminOpen(false)
+      setAddAdminForm({ name: '', email: '', password: '', gender: 'male' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהוספת אדמין')
+    } finally {
+      setIsAddingAdmin(false)
     }
-    setAdmins((prev) => [...prev, newAdmin])
-    toast.success('משתמש אדמין נוסף בהצלחה')
-    setAddAdminOpen(false)
-    setAddAdminForm({ name: '', email: '', password: '' })
   }
 
-  const handleDeleteAdmin = (adminId: string) => {
-    if (adminId === '1') {
-      toast.error('לא ניתן למחוק את האדמין הראשי')
+  const handleDeleteAdmin = async (adminId: string) => {
+    if (adminId === currentAdmin.id) {
+      toast.error('לא ניתן למחוק את המשתמש הנוכחי')
       return
     }
-    setAdmins((prev) => prev.filter((a) => a.id !== adminId))
-    toast.success('המשתמש נמחק')
+    try {
+      setIsDeletingAdmin(true)
+      await removeAdmin(adminId)
+      await loadAdmins()
+      toast.success('המשתמש נמחק')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת אדמין')
+    } finally {
+      setIsDeletingAdmin(false)
+    }
   }
 
   const handleAddTemplate = () => {
@@ -200,9 +316,20 @@ export function Settings() {
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="text-right">
-            <label className="text-sm font-medium text-[var(--color-text)]">שם משתמש</label>
+            <label className="text-sm font-medium text-[var(--color-text)]">שם מלא</label>
             <div className="mt-2">
               <Input value={profile.name} onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))} className="text-right" />
+            </div>
+          </div>
+          <div className="text-right">
+            <label className="text-sm font-medium text-[var(--color-text)]">שם משתמש</label>
+            <div className="mt-2">
+              <Input
+                value={profile.username}
+                onChange={(e) => setProfile((p) => ({ ...p, username: e.target.value }))}
+                dir="ltr"
+                className="text-left"
+              />
             </div>
           </div>
           <div className="text-right">
@@ -216,11 +343,12 @@ export function Settings() {
         <div className="mt-4 sm:mt-5 flex justify-start">
           <Button
             variant="accent"
-            onClick={() => toast.success('הפרטים נשמרו (דמו)')}
+            onClick={handleProfileSave}
             className="w-full sm:w-auto"
+            disabled={profileSaving}
           >
             <AnimatedIcon icon={User} size={18} variant="lift" />
-            שמירת פרטים
+            {profileSaving ? 'שומר...' : 'שמירת פרטים'}
           </Button>
         </div>
       </Section>
@@ -255,68 +383,93 @@ export function Settings() {
           </Button>
         </div>
 
-        {/* Mobile Card View */}
-        <div className="block md:hidden space-y-3">
-          {admins.map((admin) => (
-            <div
-              key={admin.id}
-              className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4"
-            >
-              <div className="flex flex-row-reverse items-start justify-between gap-3">
-                <div className="min-w-0 text-right">
-                  <p className="font-semibold text-[var(--color-text)] truncate">{admin.name}</p>
-                  <p className="text-sm text-[var(--color-text-muted)]" dir="ltr">{admin.email}</p>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-1">נוצר: {formatShortDate(admin.createdAt)}</p>
-                </div>
-                {admin.id !== '1' && (
-                  <button
-                    onClick={() => setDeleteAdminConfirm({ open: true, adminId: admin.id })}
-                    className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
-                    aria-label="מחיקה"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        {adminsLoading ? (
+          <p className="text-sm text-[var(--color-text-muted)]">טוען משתמשי אדמין...</p>
+        ) : null}
 
-        {/* Desktop Table */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm" dir="rtl">
-            <thead>
-              <tr className="border-b border-[var(--color-border-light)] text-[var(--color-text-muted)]">
-                <th className="px-4 py-3 text-right font-medium">שם</th>
-                <th className="px-4 py-3 text-right font-medium">אימייל</th>
-                <th className="px-4 py-3 text-right font-medium">תאריך יצירה</th>
-                <th className="px-4 py-3 text-right font-medium">פעולות</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admins.map((admin) => (
-                <tr key={admin.id} className="border-b border-[var(--color-border-light)] last:border-0">
-                  <td className="px-4 py-3 font-medium text-[var(--color-text)]">{admin.name}</td>
-                  <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">{admin.email}</td>
-                  <td className="px-4 py-3 text-[var(--color-text-muted)]">{formatShortDate(admin.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    {admin.id !== '1' ? (
-                      <button
-                        onClick={() => setDeleteAdminConfirm({ open: true, adminId: admin.id })}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
-                        aria-label="מחיקה"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    ) : (
-                      <span className="text-xs text-[var(--color-text-muted)]">אדמין ראשי</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {!adminsLoading && admins.length === 0 ? (
+          <p className="text-sm text-[var(--color-text-muted)]">לא נמצאו משתמשי אדמין.</p>
+        ) : null}
+
+        {!adminsLoading && admins.length > 0 ? (
+          <>
+            {/* Mobile Card View */}
+            <div className="block md:hidden space-y-3">
+              {admins.map((admin) => {
+                const isCurrentAdmin = admin.id === currentAdmin.id
+                return (
+                  <div
+                    key={admin.id}
+                    className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4"
+                  >
+                    <div className="flex flex-row-reverse items-start justify-between gap-3">
+                      <div className="min-w-0 text-right">
+                        <p className="font-semibold text-[var(--color-text)] truncate">{admin.name}</p>
+                        <p className="text-sm text-[var(--color-text-muted)]" dir="ltr">{admin.email}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]" dir="ltr">שם משתמש: {admin.username}</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1">נוצר: {formatShortDate(admin.createdAt)}</p>
+                      </div>
+                      {isCurrentAdmin ? (
+                        <span className="text-xs text-[var(--color-text-muted)]">המשתמש הנוכחי</span>
+                      ) : (
+                        <button
+                          onClick={() => setDeleteAdminConfirm({ open: true, adminId: admin.id })}
+                          className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
+                          aria-label="מחיקה"
+                          disabled={isDeletingAdmin}
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm" dir="rtl">
+                <thead>
+                  <tr className="border-b border-[var(--color-border-light)] text-[var(--color-text-muted)]">
+                    <th className="px-4 py-3 text-right font-medium">שם</th>
+                    <th className="px-4 py-3 text-right font-medium">אימייל</th>
+                    <th className="px-4 py-3 text-right font-medium">שם משתמש</th>
+                    <th className="px-4 py-3 text-right font-medium">תאריך יצירה</th>
+                    <th className="px-4 py-3 text-right font-medium">פעולות</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admins.map((admin) => {
+                    const isCurrentAdmin = admin.id === currentAdmin.id
+                    return (
+                      <tr key={admin.id} className="border-b border-[var(--color-border-light)] last:border-0">
+                        <td className="px-4 py-3 font-medium text-[var(--color-text)]">{admin.name}</td>
+                        <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">{admin.email}</td>
+                        <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">{admin.username}</td>
+                        <td className="px-4 py-3 text-[var(--color-text-muted)]">{formatShortDate(admin.createdAt)}</td>
+                        <td className="px-4 py-3">
+                          {isCurrentAdmin ? (
+                            <span className="text-xs text-[var(--color-text-muted)]">המשתמש הנוכחי</span>
+                          ) : (
+                            <button
+                              onClick={() => setDeleteAdminConfirm({ open: true, adminId: admin.id })}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
+                              aria-label="מחיקה"
+                              disabled={isDeletingAdmin}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
       </Section>
 
       {/* Message Templates Management */}
@@ -466,7 +619,14 @@ export function Settings() {
           </div>
 
           <div className="mt-6 flex flex-col-reverse sm:flex-row-reverse justify-start gap-2">
-            <Button variant="accent" onClick={handlePasswordChange} className="w-full sm:w-auto">עדכון סיסמה</Button>
+            <Button
+              variant="accent"
+              onClick={handlePasswordChange}
+              className="w-full sm:w-auto"
+              disabled={passwordSaving}
+            >
+              {passwordSaving ? 'מעדכן...' : 'עדכון סיסמה'}
+            </Button>
             <Button variant="outline" onClick={() => setPasswordOpen(false)} className="w-full sm:w-auto">ביטול</Button>
           </div>
         </DialogContent>
@@ -499,6 +659,18 @@ export function Settings() {
               />
             </div>
             <div className="text-right">
+              <label className="text-sm font-medium text-[var(--color-text)]">מגדר</label>
+              <div className="mt-2">
+                <DropdownSelect<Gender>
+                  value={addAdminForm.gender}
+                  onChange={(value) => setAddAdminForm((p) => ({ ...p, gender: value }))}
+                  options={genderOptions}
+                  buttonClassName="w-full justify-between bg-white"
+                  contentAlign="end"
+                />
+              </div>
+            </div>
+            <div className="text-right">
               <label className="text-sm font-medium text-[var(--color-text)]">סיסמה</label>
               <Input
                 type="password"
@@ -512,7 +684,14 @@ export function Settings() {
           </div>
 
           <div className="mt-6 flex flex-col-reverse sm:flex-row-reverse justify-start gap-2">
-            <Button variant="accent" onClick={handleAddAdmin} className="w-full sm:w-auto">הוספת אדמין</Button>
+            <Button
+              variant="accent"
+              onClick={handleAddAdmin}
+              className="w-full sm:w-auto"
+              disabled={isAddingAdmin}
+            >
+              {isAddingAdmin ? 'יוצר אדמין...' : 'הוספת אדמין'}
+            </Button>
             <Button variant="outline" onClick={() => setAddAdminOpen(false)} className="w-full sm:w-auto">ביטול</Button>
           </div>
         </DialogContent>

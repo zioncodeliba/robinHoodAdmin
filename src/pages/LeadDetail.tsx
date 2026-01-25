@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as Slider from '@radix-ui/react-slider'
@@ -30,7 +30,10 @@ import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { useUsers } from '@/lib/users-store'
 import { useAffiliates } from '@/lib/affiliates-store'
 import { useMessages } from '@/lib/messages-store'
-import { currentUser } from '@/lib/mock-data'
+import { fetchChatHistoryForUser, type ChatHistoryItem } from '@/lib/chatbot-history-api'
+import { downloadCustomerFile, fetchCustomerFiles } from '@/lib/customer-files-api'
+import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
+import { getCurrentAdminProfile } from '@/lib/admin-profile'
 import type { BankName, BankResponseExtractedData, BankResponseFile, LeadStatus, MortgageType, SignatureDocStatus, UserRecord, SentMessage } from '@/types'
 
 // Demo data for bank response
@@ -117,6 +120,7 @@ export function LeadDetail() {
   const navigate = useNavigate()
   const { users, updateUser, deleteUser, updateCustomer } = useUsers()
   const { affiliates } = useAffiliates()
+  const currentAdmin = getCurrentAdminProfile()
 
   const user = useMemo(() => users.find((u) => u.id === id) ?? null, [users, id])
   const [activeTab, setActiveTab] = useState<ActiveTab>('questionnaire')
@@ -179,6 +183,11 @@ export function LeadDetail() {
     messageId: null,
   })
 
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([])
+  const [chatHistoryLoading, setChatHistoryLoading] = useState(false)
+  const [customerFilesLoading, setCustomerFilesLoading] = useState(false)
+  const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
+
   const selectedTemplate = useMemo(() => 
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
     [templates, selectedTemplateId]
@@ -187,6 +196,158 @@ export function LeadDetail() {
   const monthly = useMemo(() => calcMonthlyPayment(loanAmount, rate, loanYears), [loanAmount, rate, loanYears])
   const totalPaid = useMemo(() => monthly * loanYears * 12, [monthly, loanYears])
   const totalInterest = useMemo(() => Math.max(0, totalPaid - loanAmount), [totalPaid, loanAmount])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
+    setChatHistoryLoading(true)
+    fetchChatHistoryForUser(user.id)
+      .then((data) => {
+        if (isMounted) setChatHistory(data)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        setChatHistory([])
+        toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת היסטוריית צ׳אט')
+      })
+      .finally(() => {
+        if (isMounted) setChatHistoryLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
+    setCustomerFilesLoading(true)
+    fetchCustomerFiles(user.id)
+      .then((data) => {
+        if (!isMounted) return
+        const mapped = data.map((item) => {
+          const uploadedDate = new Date(item.uploaded_at)
+          const uploadedAt = Number.isNaN(uploadedDate.getTime())
+            ? item.uploaded_at
+            : uploadedDate.toISOString().slice(0, 10)
+          return {
+            id: item.id,
+            originalName: item.original_name,
+            uploadedBy: 'לקוח',
+            uploadedAt,
+          }
+        })
+        updateUser(user.id, { uploadedFiles: mapped } as Partial<UserRecord>)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת קבצי לקוח')
+      })
+      .finally(() => {
+        if (isMounted) setCustomerFilesLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id, updateUser])
+
+  const handleCustomerFileView = async (file: UserRecord['uploadedFiles'][number]) => {
+    try {
+      const { blob } = await downloadCustomerFile(file.id)
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener')
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת הקובץ')
+    }
+  }
+
+  const handleCustomerFileDownload = async (file: UserRecord['uploadedFiles'][number]) => {
+    try {
+      const { blob, filename } = await downloadCustomerFile(file.id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename || file.originalName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
+    }
+  }
+
+  const formatHistoryValue = (value: string | number | null | undefined) => {
+    if (value === null || value === undefined || value === '') return '—'
+    return String(value)
+  }
+
+  const formatHistoryTimestamp = (value: string) => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    return date.toLocaleString('he-IL')
+  }
+
+  const latestSessionInfo = useMemo(() => {
+    if (chatHistory.length === 0) return null
+    let latest = chatHistory[0]
+    let latestTime = new Date(latest.timestamp).getTime()
+    if (Number.isNaN(latestTime)) latestTime = 0
+    for (const item of chatHistory.slice(1)) {
+      let time = new Date(item.timestamp).getTime()
+      if (Number.isNaN(time)) time = 0
+      if (time >= latestTime) {
+        latest = item
+        latestTime = time
+      }
+    }
+    return { sessionId: latest.session_id, timestamp: latest.timestamp }
+  }, [chatHistory])
+
+  const chatSections = useMemo(() => {
+    if (chatHistoryLoading) {
+      return [
+        {
+          title: 'שיחות צ׳אט',
+          fields: [{ label: 'סטטוס', value: 'טוען היסטוריית שיחה...' }],
+        },
+      ]
+    }
+    if (chatHistory.length === 0) {
+      return [
+        {
+          title: 'שיחות צ׳אט',
+          fields: [{ label: 'סטטוס', value: 'אין היסטוריית שיחה זמינה' }],
+        },
+      ]
+    }
+
+    return chatHistory.map((item, index) => ({
+      title: `שאלה ${index + 1}`,
+      fields: [
+        { label: 'שאלה', value: formatHistoryValue(item.block_message) },
+        { label: 'תשובה', value: formatHistoryValue(item.user_input ?? item.option_label) },
+        { label: 'תשובת אפשרות', value: formatHistoryValue(item.option_label) },
+        { label: 'קלט חופשי', value: formatHistoryValue(item.user_input) },
+        { label: 'מזהה בלוק', value: formatHistoryValue(item.block_id) },
+        { label: 'בלוק key', value: formatHistoryValue(item.block_key) },
+        { label: 'מזהה אפשרות', value: formatHistoryValue(item.selected_option_id) },
+        { label: 'סוג אפשרות', value: formatHistoryValue(item.option_type) },
+        { label: 'מזהה סשן', value: formatHistoryValue(item.session_id) },
+        { label: 'זמן', value: formatHistoryValue(formatHistoryTimestamp(item.timestamp)) },
+        { label: 'סטטוס משוב', value: formatHistoryValue(item.feedback_status) },
+        { label: 'הודעת משוב', value: formatHistoryValue(item.feedback_message) },
+        { label: 'מנע חזרה', value: item.prevent_rollback ? 'כן' : 'לא' },
+        { label: 'פעיל', value: item.is_active ? 'כן' : 'לא' },
+      ],
+    }))
+  }, [chatHistory, chatHistoryLoading])
+
+  const questionnaireSections = useMemo(
+    () => [...(user?.questionnaire ?? []), ...chatSections],
+    [user, chatSections]
+  )
 
   if (!user) {
     return (
@@ -233,6 +394,27 @@ export function LeadDetail() {
       // Error toast is handled in the store.
     } finally {
       setEditSaving(false)
+    }
+  }
+
+  const handleDownloadSessionPdf = async () => {
+    if (!user) return
+    setSignatureDownloadLoading(true)
+    try {
+      const { blob, filename } = await downloadUserSessionPdf(user.id, latestSessionInfo?.sessionId)
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      toast.success(`הקובץ הורד: ${filename}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
+    } finally {
+      setSignatureDownloadLoading(false)
     }
   }
 
@@ -489,7 +671,7 @@ export function LeadDetail() {
             <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">תצוגה לקריאה בלבד.</p>
 
             <div className="mt-4 sm:mt-5 grid grid-cols-1 gap-3 sm:gap-5 lg:grid-cols-2">
-              {user.questionnaire.map((section) => (
+              {questionnaireSections.map((section) => (
                 <div
                   key={section.title}
                   className="rounded-2xl sm:rounded-3xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-5"
@@ -518,7 +700,7 @@ export function LeadDetail() {
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצים שהלקוח העלה</h2>
-                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">תצוגה + הורדה (דמו).</p>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">תצוגה + הורדה.</p>
                 </div>
                 <Button
                   variant="outline"
@@ -535,7 +717,11 @@ export function LeadDetail() {
 
               {/* Mobile Card View */}
               <div className="mt-4 sm:hidden space-y-3">
-                {user.uploadedFiles.length === 0 ? (
+                {customerFilesLoading ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    טוען קבצים...
+                  </div>
+                ) : user.uploadedFiles.length === 0 ? (
                   <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
                     עדיין לא הועלו קבצים.
                   </div>
@@ -556,7 +742,7 @@ export function LeadDetail() {
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
-                            onClick={() => toast.message(`צפייה (דמו): ${f.originalName}`)}
+                            onClick={() => void handleCustomerFileView(f)}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                             aria-label="צפייה"
                             title="צפייה"
@@ -564,7 +750,7 @@ export function LeadDetail() {
                             <Eye size={14} />
                           </button>
                           <button
-                            onClick={() => toast.success(`הורדה (דמו): ${f.originalName}`)}
+                            onClick={() => void handleCustomerFileDownload(f)}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                             aria-label="הורדה"
                             title="הורדה"
@@ -580,7 +766,11 @@ export function LeadDetail() {
 
               {/* Desktop Table View */}
               <div className="mt-4 hidden sm:block">
-                {user.uploadedFiles.length === 0 ? (
+                {customerFilesLoading ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                    טוען קבצים...
+                  </div>
+                ) : user.uploadedFiles.length === 0 ? (
                   <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
                     עדיין לא הועלו קבצים.
                   </div>
@@ -606,7 +796,7 @@ export function LeadDetail() {
                             <td className="px-4 py-3 text-[var(--color-text-muted)]">{f.uploadedAt}</td>
                             <td className="px-4 py-3 text-center">
                               <button
-                                onClick={() => toast.message(`צפייה (דמו): ${f.originalName}`)}
+                                onClick={() => void handleCustomerFileView(f)}
                                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="צפייה"
                                 title="צפייה"
@@ -616,7 +806,7 @@ export function LeadDetail() {
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button
-                                onClick={() => toast.success(`הורדה (דמו): ${f.originalName}`)}
+                                onClick={() => void handleCustomerFileDownload(f)}
                                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="הורדה"
                                 title="הורדה"
@@ -640,6 +830,42 @@ export function LeadDetail() {
                   <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצים לחתימה</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">סטטוס חתימה + שליחה חוזרת (דמו).</p>
                 </div>
+              </div>
+
+              <div className="mt-4">
+                {chatHistoryLoading ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    טוען קובץ מהשיחה...
+                  </div>
+                ) : latestSessionInfo ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-[var(--color-text)]">מסמך מהשיחה</p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                          {`session_${latestSessionInfo.sessionId}.pdf`}
+                        </p>
+                        <p className="text-xs text-[var(--color-text-muted)]">
+                          עודכן: {formatHistoryTimestamp(latestSessionInfo.timestamp)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadSessionPdf}
+                        disabled={signatureDownloadLoading}
+                        className="w-full sm:w-auto"
+                      >
+                        <Download size={16} />
+                        {signatureDownloadLoading ? 'מוריד...' : 'הורדה'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    אין קובץ מצורף מהשיחה.
+                  </div>
+                )}
               </div>
 
               {/* Mobile Card View */}
@@ -1929,7 +2155,7 @@ export function LeadDetail() {
 
             {/* Admin info */}
             <div className="text-xs text-[var(--color-text-muted)] text-right">
-              יועלה ע״י: <strong className="text-[var(--color-text)]">{currentUser.name}</strong>
+              יועלה ע״י: <strong className="text-[var(--color-text)]">{currentAdmin.name}</strong>
             </div>
           </div>
 
@@ -1949,7 +2175,7 @@ export function LeadDetail() {
                         id: fileId,
                         originalName: fileUploadForm.fileName,
                         customName: fileUploadForm.customName.trim() || undefined,
-                        uploadedBy: currentUser.name,
+                        uploadedBy: currentAdmin.name,
                         uploadedAt: new Date().toISOString().slice(0, 10),
                       },
                       ...user.uploadedFiles,
@@ -1969,4 +2195,3 @@ export function LeadDetail() {
     </div>
   )
 }
-

@@ -1,6 +1,6 @@
 import { Menu } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
-import { currentUser } from '@/lib/mock-data'
+import { getCurrentAdminProfile } from '@/lib/admin-profile'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 
 interface TopBarProps {
@@ -9,6 +9,7 @@ interface TopBarProps {
 
 export function TopBar({ onMenuClick }: TopBarProps) {
   const today = new Date()
+  const currentAdmin = getCurrentAdminProfile()
 
   return (
     <header className="flex items-center justify-between gap-2 sm:gap-4 rounded-3xl border border-[var(--color-border)] bg-white px-3 sm:px-6 py-3 shadow-sm">
@@ -32,10 +33,10 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         {/* User display - no dropdown */}
         <div className="flex items-center gap-1 sm:gap-2 rounded-full px-2 sm:px-3 py-2">
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary)] text-white text-sm font-semibold">
-            {currentUser.name.split(' ').map((n) => n[0]).join('')}
+            {currentAdmin.name.split(' ').map((n) => n[0]).join('')}
           </span>
           <span className="hidden sm:block text-sm font-medium text-[var(--color-text)]">
-            {currentUser.name}
+            {currentAdmin.name}
           </span>
         </div>
       </div>

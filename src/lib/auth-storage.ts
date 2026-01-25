@@ -48,6 +48,22 @@ export function getStoredAuth(): StoredAuth | null {
   }
 }
 
+export function updateStoredUser(patch: Partial<StoredAuth['user']>): StoredAuth | null {
+  const auth = getStoredAuth()
+  if (!auth) {
+    return null
+  }
+  const next: StoredAuth = {
+    ...auth,
+    user: {
+      ...auth.user,
+      ...patch,
+    },
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  return next
+}
+
 export function isActiveAdminAuth(auth: StoredAuth | null): boolean {
   return Boolean(auth?.accessToken && auth.user.role && auth.user.status === 'active')
 }
