@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ChevronLeft, ChevronRight, Plus, CalendarDays, SlidersHorizontal, X, Clock, AlertTriangle } from 'lucide-react'
 
@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { DropdownSelect } from '@/components/ui/dropdown-select'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
+import { fetchMeetingAvailability, updateMeetingAvailability, type AvailabilityDay, type DateException, type TimeRange } from '@/lib/meeting-availability-api'
 import { useUsers } from '@/lib/users-store'
 import { formatShortDate } from '@/lib/utils'
 import { createMeeting as createMeetingRequest, deleteMeeting, fetchMeetings, type MeetingItem } from '@/lib/meetings-api'
@@ -126,25 +127,6 @@ const statusPill: Record<MeetingStatus, string> = {
   'בוטל': 'bg-red-100 text-red-700',
 }
 
-type TimeRange = {
-  start: string
-  end: string
-}
-
-type AvailabilityDay = {
-  enabled: boolean
-  ranges: TimeRange[]
-}
-
-type DateException = {
-  id: string
-  date: string
-  type: 'block' | 'open'
-  allDay: boolean
-  ranges: TimeRange[]
-  reason: string
-}
-
 const dayDefs = [
   { dayIndex: 0, short: 'א׳', label: 'יום א׳' },
   { dayIndex: 1, short: 'ב׳', label: 'יום ב׳' },
@@ -154,6 +136,12 @@ const dayDefs = [
   { dayIndex: 5, short: 'ו׳', label: 'יום ו׳' },
   { dayIndex: 6, short: 'ש׳', label: 'שבת' },
 ] as const
+
+const buildDefaultAvailability = (): AvailabilityDay[] =>
+  dayDefs.map((d) => ({
+    enabled: d.dayIndex !== 6,
+    ranges: [{ start: '09:00', end: '17:00' }],
+  }))
 
 export function Meetings() {
   const { users } = useUsers()
@@ -169,13 +157,10 @@ export function Meetings() {
   const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
   const [meetingsLoading, setMeetingsLoading] = useState(false)
   const [meetingSaving, setMeetingSaving] = useState(false)
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const [availabilitySaving, setAvailabilitySaving] = useState(false)
 
-  const [availability, setAvailability] = useState<AvailabilityDay[]>(() =>
-    dayDefs.map((d) => ({
-      enabled: d.dayIndex !== 6,
-      ranges: [{ start: '09:00', end: '17:00' }],
-    }))
-  )
+  const [availability, setAvailability] = useState<AvailabilityDay[]>(() => buildDefaultAvailability())
 
   const [blockHolidays, setBlockHolidays] = useState(true)
   const [agentCount, setAgentCount] = useState(1)
@@ -358,6 +343,53 @@ export function Meetings() {
       isActive = false
     }
   }, [])
+
+  const loadAvailability = useCallback(async () => {
+    try {
+      setAvailabilityLoading(true)
+      const data = await fetchMeetingAvailability()
+      const normalizedAvailability = Array.isArray(data.availability) && data.availability.length > 0
+        ? data.availability
+        : buildDefaultAvailability()
+      setAvailability(normalizedAvailability)
+      setExceptions(Array.isArray(data.exceptions) ? data.exceptions : [])
+      setAgentCount(Math.max(1, data.agent_count || 1))
+      setBlockHolidays(data.block_holidays ?? true)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת זמינות')
+    } finally {
+      setAvailabilityLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadAvailability()
+  }, [loadAvailability])
+
+  const saveAvailability = async () => {
+    try {
+      setAvailabilitySaving(true)
+      const updated = await updateMeetingAvailability({
+        availability,
+        exceptions,
+        agent_count: agentCount,
+        block_holidays: blockHolidays,
+      })
+      const normalizedAvailability = Array.isArray(updated.availability) && updated.availability.length > 0
+        ? updated.availability
+        : buildDefaultAvailability()
+      setAvailability(normalizedAvailability)
+      setExceptions(Array.isArray(updated.exceptions) ? updated.exceptions : [])
+      setAgentCount(Math.max(1, updated.agent_count || 1))
+      setBlockHolidays(updated.block_holidays ?? true)
+      toast.success('הזמינות נשמרה')
+      setAvailabilityOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת זמינות')
+    } finally {
+      setAvailabilitySaving(false)
+    }
+  }
 
   const createMeeting = async () => {
     if (!selectedUser) {
@@ -1189,6 +1221,10 @@ export function Meetings() {
             <DialogDescription>בחרו באילו ימים ושעות ניתן לקבוע פגישות, והחריגו תאריכים ספציפיים.</DialogDescription>
           </DialogHeader>
 
+          {availabilityLoading && (
+            <div className="text-sm text-[var(--color-text-muted)] text-center">טוען זמינות...</div>
+          )}
+
           <div className="space-y-4 sm:space-y-5 max-h-[60vh] overflow-y-auto">
             {/* Agent Count Setting */}
             <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4">
@@ -1437,13 +1473,11 @@ export function Meetings() {
             <Button variant="outline" onClick={() => setAvailabilityOpen(false)} className="w-full sm:w-auto">סגור</Button>
             <Button
               variant="accent"
-              onClick={() => {
-                toast.success('הזמינות נשמרה')
-                setAvailabilityOpen(false)
-              }}
+              onClick={saveAvailability}
+              disabled={availabilitySaving || availabilityLoading}
               className="w-full sm:w-auto"
             >
-              שמירה
+              {availabilitySaving ? 'שומר...' : 'שמירה'}
             </Button>
           </div>
         </DialogContent>

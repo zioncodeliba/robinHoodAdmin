@@ -1,36 +1,19 @@
-import type { LeadStatus, MortgageType } from '@/types'
 import { getStoredAuth } from '@/lib/auth-storage'
 
-export type CustomerCreateInput = {
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: MortgageType
-  gender: 'male' | 'female'
-}
-
-export type CustomerUpdateInput = Partial<Omit<CustomerCreateInput, 'gender'>> & {
-  gender?: never
-}
-
-export type CustomerItem = {
-  id: string
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: MortgageType
-  created_at: string
-  last_activity_at: string
-}
-
-export type CustomerDeleteResponse = {
+export type NotificationCreateInput = {
   message: string
+  templateId?: string
+  templateName?: string
+}
+
+export type NotificationItem = {
   id: string
-  deleted: boolean
+  user_id: string
+  message: string
+  sent_at: string
+  read_at?: string | null
+  template_id?: string | null
+  template_name?: string | null
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -87,26 +70,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload
 }
 
-export async function fetchCustomers(): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>('/customers')
+export async function fetchNotificationsByUser(userId: string): Promise<NotificationItem[]> {
+  return request<NotificationItem[]>(`/notifications/by-user/${userId}`)
 }
 
-export async function createCustomer(payload: CustomerCreateInput): Promise<CustomerItem> {
-  return request<CustomerItem>('/customers', {
+export async function createNotificationForUser(
+  userId: string,
+  payload: NotificationCreateInput
+): Promise<NotificationItem> {
+  return request<NotificationItem>(`/notifications/by-user/${userId}`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      message: payload.message,
+      template_id: payload.templateId,
+      template_name: payload.templateName,
+    }),
   })
 }
 
-export async function updateCustomer(userId: string, payload: CustomerUpdateInput): Promise<CustomerItem> {
-  return request<CustomerItem>(`/customers/${userId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteCustomer(userId: string): Promise<CustomerDeleteResponse> {
-  return request<CustomerDeleteResponse>(`/customers/${userId}`, {
+export async function deleteNotification(notificationId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/notifications/${notificationId}`, {
     method: 'DELETE',
   })
 }

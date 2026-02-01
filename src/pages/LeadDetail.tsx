@@ -31,48 +31,12 @@ import { useUsers } from '@/lib/users-store'
 import { useAffiliates } from '@/lib/affiliates-store'
 import { useMessages } from '@/lib/messages-store'
 import { fetchChatHistoryForUser, type ChatHistoryItem } from '@/lib/chatbot-history-api'
+import { downloadBankResponseFile, fetchBankResponses, uploadBankResponseForUser, type BankResponseItem } from '@/lib/bank-responses-api'
 import { downloadCustomerFile, fetchCustomerFiles } from '@/lib/customer-files-api'
+import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
 import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
 import { getCurrentAdminProfile } from '@/lib/admin-profile'
 import type { BankName, BankResponseExtractedData, BankResponseFile, LeadStatus, MortgageType, SignatureDocStatus, UserRecord, SentMessage } from '@/types'
-
-// Demo data for bank response
-const demoBankResponseData: BankResponseExtractedData = {
-  code: 0,
-  message: 'done',
-  uuid: '24fc5f9c-f2ad-4135-b982-0f7ea2be0658',
-  data: {
-    approval_date: '27/11/2024',
-    expiration_date: '21/12/2024',
-    bank_id: '1',
-    bank_title: 'מזרחי טפחות',
-    bank_color: '#f5821f',
-    purpose: 'מיחזור לבנק אחר -לדיור',
-    purpose_type: 1,
-    tracks: [
-      {
-        loan_type: 2,
-        loan_board: '1',
-        loan_years: 360,
-        loan_value: 250000,
-        loan_interest: 5.02,
-        addition_to_interest: '',
-        change_frequency: '',
-        anchor: 5.02,
-      },
-      {
-        loan_type: 4,
-        loan_board: '1',
-        loan_years: 360,
-        loan_value: 250000,
-        loan_interest: 5.22,
-        addition_to_interest: 0.9,
-        change_frequency: 24,
-        anchor: 4.32,
-      },
-    ],
-  },
-}
 
 const loanTypeLabels: Record<number, string> = {
   1: 'קבועה צמודה',
@@ -81,6 +45,41 @@ const loanTypeLabels: Record<number, string> = {
   4: 'פריים',
   5: 'משתנה לא צמודה',
 }
+
+const bankIdByName: Record<BankName, number> = {
+  'מזרחי-טפחות': 1,
+  'לאומי': 2,
+  'הפועלים': 3,
+  'דיסקונט': 4,
+  'הבינלאומי': 8,
+  'מרכנתיל': 12,
+}
+
+const bankNameById: Record<number, BankName> = {
+  1: 'מזרחי-טפחות',
+  2: 'לאומי',
+  3: 'הפועלים',
+  4: 'דיסקונט',
+  8: 'הבינלאומי',
+  12: 'מרכנתיל',
+}
+
+const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
+  id: item.id,
+  templateId: item.template_id ?? '',
+  templateName: item.template_name ?? 'עדכון',
+  message: item.message,
+  sentAt: item.sent_at,
+  readAt: item.read_at ?? undefined,
+})
+
+type BankProcessType = 'recycle' | 'new_loan'
+
+const resolveProcessType = (mortgageType?: MortgageType): BankProcessType =>
+  mortgageType === 'משכנתא חדשה' ? 'new_loan' : 'recycle'
+
+const SYSTEM_SIGNATURE_PREFIX = 'system_signature_'
+const BANK_SIGNATURE_PREFIX = 'bank_signature_'
 
 type ActiveTab = 'questionnaire' | 'files' | 'simulator' | 'updates'
 type SimulatorTab = 'לאומי' | 'מזרחי-טפחות' | 'הצעה נבחרת'
@@ -138,6 +137,7 @@ export function LeadDetail() {
   })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteSaving, setDeleteSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{
     open: boolean
     type: 'bankResponse' | 'simulatorOffer' | 'clientPayment' | null
@@ -146,10 +146,20 @@ export function LeadDetail() {
 
   const [uploadingBankFile, setUploadingBankFile] = useState(false)
   const [bankUploadOpen, setBankUploadOpen] = useState(false)
-  const [bankUploadForm, setBankUploadForm] = useState<{ bank: BankName; fileName: string; customName: string }>({
+  const [bankUploadForm, setBankUploadForm] = useState<{
+    bank: BankName
+    fileName: string
+    customName: string
+    amount: string
+    file: File | null
+    processType: BankProcessType
+  }>({
     bank: 'לאומי',
     fileName: '',
     customName: '',
+    amount: '',
+    file: null,
+    processType: resolveProcessType(user?.mortgageType),
   })
   const [viewBankDataOpen, setViewBankDataOpen] = useState(false)
   const [viewBankData, setViewBankData] = useState<BankResponseFile | null>(null)
@@ -186,6 +196,8 @@ export function LeadDetail() {
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([])
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false)
   const [customerFilesLoading, setCustomerFilesLoading] = useState(false)
+  const [bankResponsesLoading, setBankResponsesLoading] = useState(false)
+  const [systemFiles, setSystemFiles] = useState<{ id: string; originalName: string; uploadedAt: string }[]>([])
   const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
 
   const selectedTemplate = useMemo(() => 
@@ -221,11 +233,52 @@ export function LeadDetail() {
   useEffect(() => {
     if (!user) return
     let isMounted = true
+    fetchNotificationsByUser(user.id)
+      .then((items) => {
+        if (!isMounted) return
+        updateUser(
+          user.id,
+          { sentMessages: items.map(mapNotificationToSentMessage) } as Partial<UserRecord>
+        )
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת הודעות')
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id, updateUser])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
     setCustomerFilesLoading(true)
+    setSystemFiles([])
     fetchCustomerFiles(user.id)
       .then((data) => {
         if (!isMounted) return
-        const mapped = data.map((item) => {
+        const systemItems = data.filter((item) => item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX))
+        const bankItems = data.filter((item) => item.original_name.startsWith(BANK_SIGNATURE_PREFIX))
+        const customerItems = data.filter(
+          (item) =>
+            !item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX) &&
+            !item.original_name.startsWith(BANK_SIGNATURE_PREFIX)
+        )
+
+        const mappedSystem = systemItems.map((item) => {
+          const uploadedDate = new Date(item.uploaded_at)
+          const uploadedAt = Number.isNaN(uploadedDate.getTime())
+            ? item.uploaded_at
+            : uploadedDate.toISOString().slice(0, 10)
+          return {
+            id: item.id,
+            originalName: item.original_name,
+            uploadedAt,
+          }
+        })
+
+        const mapped = customerItems.map((item) => {
           const uploadedDate = new Date(item.uploaded_at)
           const uploadedAt = Number.isNaN(uploadedDate.getTime())
             ? item.uploaded_at
@@ -237,14 +290,43 @@ export function LeadDetail() {
             uploadedAt,
           }
         })
-        updateUser(user.id, { uploadedFiles: mapped } as Partial<UserRecord>)
+        const mappedSignatureDocs = bankItems.map((item) => ({
+          id: item.id,
+          name: item.original_name,
+          status: 'נחתם' as SignatureDocStatus,
+          fileName: item.original_name,
+        }))
+        setSystemFiles(mappedSystem)
+        updateUser(user.id, { uploadedFiles: mapped, signatureDocs: mappedSignatureDocs } as Partial<UserRecord>)
       })
       .catch((error) => {
         if (!isMounted) return
+        setSystemFiles([])
         toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת קבצי לקוח')
       })
       .finally(() => {
         if (isMounted) setCustomerFilesLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id, updateUser])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
+    setBankResponsesLoading(true)
+    fetchBankResponses(user.id)
+      .then((data) => {
+        if (!isMounted) return
+        updateUser(user.id, { bankResponses: data.map(mapBankResponseItem) } as Partial<UserRecord>)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת קבצי בנק')
+      })
+      .finally(() => {
+        if (isMounted) setBankResponsesLoading(false)
       })
     return () => {
       isMounted = false
@@ -275,6 +357,117 @@ export function LeadDetail() {
       URL.revokeObjectURL(url)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
+    }
+  }
+
+  const handleSystemFileView = async (fileId: string) => {
+    try {
+      const { blob } = await downloadCustomerFile(fileId)
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener')
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת הקובץ')
+    }
+  }
+
+  const handleSystemFileDownload = async (fileId: string, fallbackName: string) => {
+    try {
+      const { blob, filename } = await downloadCustomerFile(fileId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename || fallbackName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
+    }
+  }
+
+  const mapBankResponseItem = (item: BankResponseItem): BankResponseFile => {
+    const uploadedDate = new Date(item.uploaded_at)
+    const uploadedAt = Number.isNaN(uploadedDate.getTime())
+      ? item.uploaded_at
+      : uploadedDate.toISOString().slice(0, 10)
+    const extractedJson =
+      item.extracted_json && typeof item.extracted_json === 'object'
+        ? (item.extracted_json as BankResponseExtractedData)
+        : null
+    return {
+      id: item.id,
+      fileName: item.original_name,
+      bank: bankNameById[item.bank_id] ?? 'לאומי',
+      uploadedAt,
+      extractedJson,
+    }
+  }
+
+  const handleBankResponseView = async (response: BankResponseFile) => {
+    try {
+      const { blob, filename } = await downloadBankResponseFile(response.id)
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener')
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      toast.success(`הקובץ נפתח: ${filename || response.fileName}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בפתיחת קובץ בנק')
+    }
+  }
+
+  const handleBankUpload = async () => {
+    if (!user) return
+    if (!bankUploadForm.file) {
+      toast.error('בחרו קובץ להעלאה')
+      return
+    }
+    if (!bankUploadForm.customName.trim()) {
+      toast.error('נא להזין שם קובץ')
+      return
+    }
+    const amountValue = Number((bankUploadForm.amount || '').replace(/[^\d]/g, ''))
+    if (!amountValue) {
+      toast.error('נא להזין סכום משכנתא תקין')
+      return
+    }
+
+    const bankId = bankIdByName[bankUploadForm.bank]
+    const rawFile = bankUploadForm.file
+    const extension = rawFile.name.includes('.') ? rawFile.name.split('.').pop() ?? '' : ''
+    const trimmedName = bankUploadForm.customName.trim()
+    const hasExtension = extension && trimmedName.toLowerCase().endsWith(`.${extension.toLowerCase()}`)
+    const uploadName = hasExtension ? trimmedName : `${trimmedName}${extension ? `.${extension}` : ''}`
+    const uploadFile = uploadName === rawFile.name
+      ? rawFile
+      : new File([rawFile], uploadName, { type: rawFile.type })
+    const scanType = bankUploadForm.processType === 'new_loan' ? 'new_loan' : undefined
+
+    try {
+      setUploadingBankFile(true)
+      const created = await uploadBankResponseForUser(user.id, {
+        bank_id: bankId,
+        amount: amountValue,
+        file: uploadFile,
+        scan_type: scanType,
+      })
+      const mapped = mapBankResponseItem(created)
+      updateUser(user.id, { bankResponses: [mapped, ...user.bankResponses] } as Partial<UserRecord>)
+      toast.success('הקובץ הועלה בהצלחה')
+      setBankUploadOpen(false)
+      setBankUploadForm({
+        bank: 'לאומי',
+        fileName: '',
+        customName: '',
+        amount: '',
+        file: null,
+        processType: resolveProcessType(user?.mortgageType),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהעלאת קובץ בנק')
+    } finally {
+      setUploadingBankFile(false)
     }
   }
 
@@ -394,6 +587,19 @@ export function LeadDetail() {
       // Error toast is handled in the store.
     } finally {
       setEditSaving(false)
+    }
+  }
+
+  const handleDeleteCustomer = async () => {
+    try {
+      setDeleteSaving(true)
+      await deleteUser(user.id)
+      setDeleteOpen(false)
+      navigate('/users')
+    } catch {
+      // Error toast is handled in the store.
+    } finally {
+      setDeleteSaving(false)
     }
   }
 
@@ -832,42 +1038,6 @@ export function LeadDetail() {
                 </div>
               </div>
 
-              <div className="mt-4">
-                {chatHistoryLoading ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
-                    טוען קובץ מהשיחה...
-                  </div>
-                ) : latestSessionInfo ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-[var(--color-text)]">מסמך מהשיחה</p>
-                        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
-                          {`session_${latestSessionInfo.sessionId}.pdf`}
-                        </p>
-                        <p className="text-xs text-[var(--color-text-muted)]">
-                          עודכן: {formatHistoryTimestamp(latestSessionInfo.timestamp)}
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleDownloadSessionPdf}
-                        disabled={signatureDownloadLoading}
-                        className="w-full sm:w-auto"
-                      >
-                        <Download size={16} />
-                        {signatureDownloadLoading ? 'מוריד...' : 'הורדה'}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
-                    אין קובץ מצורף מהשיחה.
-                  </div>
-                )}
-              </div>
-
               {/* Mobile Card View */}
               <div className="mt-4 space-y-3 sm:hidden">
                 {user.signatureDocs.length === 0 ? (
@@ -905,11 +1075,7 @@ export function LeadDetail() {
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => {
-                              if (!d.fileName) {
-                                toast.message('אין מסמך לצפייה. העלו מסמך קודם.')
-                                return
-                              }
-                              toast.message(`צפייה (דמו): ${d.fileName}`)
+                              void handleSystemFileView(d.id)
                             }}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
                             aria-label="צפייה"
@@ -992,11 +1158,7 @@ export function LeadDetail() {
                             <td className="px-4 py-3 text-center">
                               <button
                                 onClick={() => {
-                                  if (!d.fileName) {
-                                    toast.message('אין מסמך לצפייה. העלו מסמך קודם.')
-                                    return
-                                  }
-                                  toast.message(`צפייה (דמו): ${d.fileName}`)
+                                  void handleSystemFileView(d.id)
                                 }}
                                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="צפייה במסמך"
@@ -1055,22 +1217,33 @@ export function LeadDetail() {
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">העלאה, צפייה בנתונים שחולצו ומחיקה.</p>
                 </div>
 
-                <Button
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  onClick={() => {
-                    setBankUploadForm({ bank: 'לאומי', fileName: '', customName: '' })
-                    setBankUploadOpen(true)
-                  }}
-                >
-                  <AnimatedIcon icon={FileUp} size={18} variant="lift" />
-                  העלאת קובץ
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setBankUploadForm({
+                    bank: 'לאומי',
+                    fileName: '',
+                    customName: '',
+                    amount: '',
+                    file: null,
+                    processType: resolveProcessType(user?.mortgageType),
+                  })
+                  setBankUploadOpen(true)
+                }}
+              >
+                <AnimatedIcon icon={FileUp} size={18} variant="lift" />
+                העלאת קובץ
+              </Button>
+            </div>
 
-              {/* Mobile Card View */}
+            {/* Mobile Card View */}
               <div className="mt-4 space-y-3 sm:hidden">
-                {user.bankResponses.length === 0 ? (
+                {bankResponsesLoading ? (
+                  <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    טוען קבצי בנק...
+                  </div>
+                ) : user.bankResponses.length === 0 ? (
                   <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
                     אין קבצי בנק עדיין.
                   </div>
@@ -1094,7 +1267,7 @@ export function LeadDetail() {
                       </div>
                       <div className="flex flex-row-reverse items-center gap-2">
                         <button
-                          onClick={() => toast.message(`פתיחת קובץ (דמו): ${r.fileName}`)}
+                          onClick={() => handleBankResponseView(r)}
                           className="inline-flex h-8 items-center gap-1 rounded-full border border-[var(--color-border)] bg-white px-3 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-border-light)]"
                         >
                           <Eye size={14} />
@@ -1118,7 +1291,11 @@ export function LeadDetail() {
 
               {/* Desktop Table View */}
               <div className="mt-4 hidden sm:block">
-                {user.bankResponses.length === 0 ? (
+                {bankResponsesLoading ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                    טוען קבצי בנק...
+                  </div>
+                ) : user.bankResponses.length === 0 ? (
                   <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
                     אין קבצי בנק עדיין.
                   </div>
@@ -1145,7 +1322,7 @@ export function LeadDetail() {
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button
-                                onClick={() => toast.message(`פתיחת קובץ (דמו): ${r.fileName}`)}
+                                onClick={() => handleBankResponseView(r)}
                                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] text-[var(--color-primary)]"
                                 aria-label="פתח קובץ"
                                 title="פתח קובץ"
@@ -1180,6 +1357,95 @@ export function LeadDetail() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 4) System files */}
+            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצי מערכת</h2>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">מסמכים שנוצרו בסיום השיחה.</p>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                {chatHistoryLoading || customerFilesLoading ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    טוען קבצי מערכת...
+                  </div>
+                ) : !latestSessionInfo && systemFiles.length === 0 ? (
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    אין קבצי מערכת זמינים מהשיחה.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {latestSessionInfo ? (
+                      <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-[var(--color-text)]">מסמך מהשיחה</p>
+                            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                              {`session_${latestSessionInfo.sessionId}.pdf`}
+                            </p>
+                            <p className="text-xs text-[var(--color-text-muted)]">
+                              עודכן: {formatHistoryTimestamp(latestSessionInfo.timestamp)}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleDownloadSessionPdf}
+                            disabled={signatureDownloadLoading}
+                            className="w-full sm:w-auto"
+                          >
+                            <Download size={16} />
+                            {signatureDownloadLoading ? 'מוריד...' : 'הורדה'}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {systemFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
+                          <div className="text-right">
+                            <p className="text-sm font-semibold text-[var(--color-text)]">חתימה דיגיטלית</p>
+                            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                              {file.originalName}
+                            </p>
+                            <p className="text-xs text-[var(--color-text-muted)]">
+                              עודכן: {file.uploadedAt}
+                            </p>
+                          </div>
+                          <div className="flex flex-col gap-2 sm:flex-row-reverse sm:items-center">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleSystemFileView(file.id)}
+                              className="w-full sm:w-auto"
+                            >
+                              <Eye size={16} />
+                              צפייה
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleSystemFileDownload(file.id, file.originalName)}
+                              className="w-full sm:w-auto"
+                            >
+                              <Download size={16} />
+                              הורדה
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1563,21 +1829,27 @@ export function LeadDetail() {
                   <Button
                     variant="accent"
                     disabled={!selectedTemplateId}
-                    onClick={() => {
-                      if (!selectedTemplate) return
-                      const newMessage: SentMessage = {
-                        id: `msg-${Date.now()}`,
-                        templateId: selectedTemplate.id,
-                        templateName: selectedTemplate.name,
-                        message: selectedTemplate.message.replace('{שם}', `${user.firstName} ${user.lastName}`),
-                        sentAt: new Date().toISOString(),
-                        readAt: undefined,
+                    onClick={async () => {
+                      if (!user || !selectedTemplate) return
+                      try {
+                        const payloadMessage = selectedTemplate.message.replace(
+                          '{שם}',
+                          `${user.firstName} ${user.lastName}`
+                        )
+                        const saved = await createNotificationForUser(user.id, {
+                          message: payloadMessage,
+                          templateId: selectedTemplate.id,
+                          templateName: selectedTemplate.name,
+                        })
+                        const newMessage: SentMessage = mapNotificationToSentMessage(saved)
+                        updateUser(user.id, {
+                          sentMessages: [newMessage, ...(user.sentMessages || [])],
+                        } as Partial<UserRecord>)
+                        setSelectedTemplateId('')
+                        toast.success('ההודעה נשלחה בהצלחה')
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : 'שגיאה בשליחת הודעה')
                       }
-                      updateUser(user.id, {
-                        sentMessages: [newMessage, ...(user.sentMessages || [])],
-                      } as Partial<UserRecord>)
-                      setSelectedTemplateId('')
-                      toast.success('ההודעה נשלחה בהצלחה (דמו)')
                     }}
                   >
                     <AnimatedIcon icon={Send} size={18} variant="lift" />
@@ -1790,20 +2062,19 @@ export function LeadDetail() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>מחיקת לקוח</DialogTitle>
-            <DialogDescription>אתם בטוחים שברצונכם למחוק את {fullName}?</DialogDescription>
+            <DialogDescription>
+              אתם בטוחים שברצונכם למחוק את {fullName}? פעולה זו מוחקת גם שיחות, תהליכים וקבצים ואינה ניתנת לביטול.
+            </DialogDescription>
           </DialogHeader>
           <div className="mt-6 flex flex-col-reverse sm:flex-row items-center justify-end gap-2">
             <Button variant="outline" onClick={() => setDeleteOpen(false)} className="w-full sm:w-auto">ביטול</Button>
             <Button
               variant="danger"
               className="w-full sm:w-auto"
-              onClick={() => {
-                deleteUser(user.id)
-                setDeleteOpen(false)
-                navigate('/users')
-              }}
+              onClick={handleDeleteCustomer}
+              disabled={deleteSaving}
             >
-              מחיקה
+              {deleteSaving ? 'מוחק...' : 'מחיקה'}
             </Button>
           </div>
         </DialogContent>
@@ -1858,12 +2129,17 @@ export function LeadDetail() {
         description="האם אתה בטוח שברצונך למחוק את ההודעה מההיסטוריה? פעולה זו אינה ניתנת לביטול."
         confirmText="מחיקה"
         onConfirm={() => {
-          if (deleteMessageConfirm.messageId) {
-            updateUser(user.id, {
-              sentMessages: (user.sentMessages || []).filter((m) => m.id !== deleteMessageConfirm.messageId),
-            } as Partial<UserRecord>)
-            toast.success('ההודעה נמחקה')
-          }
+          if (!deleteMessageConfirm.messageId || !user) return
+          deleteNotification(deleteMessageConfirm.messageId)
+            .then(() => {
+              updateUser(user.id, {
+                sentMessages: (user.sentMessages || []).filter((m) => m.id !== deleteMessageConfirm.messageId),
+              } as Partial<UserRecord>)
+              toast.success('ההודעה נמחקה')
+            })
+            .catch((error) => {
+              toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת הודעה')
+            })
         }}
       />
 
@@ -1908,9 +2184,37 @@ export function LeadDetail() {
             </div>
 
             <div>
+              <label className="text-sm font-medium text-[var(--color-text)]">סוג תהליך</label>
+              <div className="mt-2">
+                <DropdownSelect<BankProcessType>
+                  value={bankUploadForm.processType}
+                  onChange={(v) => setBankUploadForm((p) => ({ ...p, processType: v }))}
+                  options={[
+                    { value: 'new_loan', label: 'משכנתא חדשה (אישור עקרוני)' },
+                    { value: 'recycle', label: 'מחזור משכנתא (דוח יתרות)' },
+                  ]}
+                  buttonClassName="w-full justify-between bg-white"
+                  contentAlign="end"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-[var(--color-text)]">סכום משכנתא</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={bankUploadForm.amount}
+                onChange={(e) => setBankUploadForm((p) => ({ ...p, amount: e.target.value }))}
+                placeholder="לדוגמה: 1,250,000"
+                className="mt-2 w-full h-11 rounded-full border border-[var(--color-border)] bg-white px-4 text-sm outline-none"
+              />
+            </div>
+
+            <div>
               <label className="text-sm font-medium text-[var(--color-text)]">קובץ</label>
               <div className="mt-2">
-                <div className="rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-background)] p-6 text-center">
+                <div className="relative rounded-2xl border-2 border-dashed border-[var(--color-border)] bg-[var(--color-background)] p-6 text-center">
                   <AnimatedIcon icon={FileUp} size={32} variant="lift" className="mx-auto text-[var(--color-text-muted)]" />
                   <p className="mt-2 text-sm text-[var(--color-text-muted)]">
                     {bankUploadForm.fileName || 'גרור קובץ לכאן או לחץ לבחירה'}
@@ -1922,10 +2226,9 @@ export function LeadDetail() {
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
-                        setBankUploadForm((p) => ({ ...p, fileName: file.name }))
+                        setBankUploadForm((p) => ({ ...p, fileName: file.name, file }))
                       }
                     }}
-                    style={{ position: 'relative', marginTop: '8px' }}
                   />
                 </div>
               </div>
@@ -1936,29 +2239,9 @@ export function LeadDetail() {
             <Button variant="outline" onClick={() => setBankUploadOpen(false)} className="w-full sm:w-auto">ביטול</Button>
             <Button
               variant="accent"
-              disabled={!bankUploadForm.fileName || !bankUploadForm.customName.trim() || uploadingBankFile}
+              disabled={!bankUploadForm.file || !bankUploadForm.customName.trim() || !bankUploadForm.amount.trim() || uploadingBankFile}
               className="w-full sm:w-auto"
-              onClick={() => {
-                setUploadingBankFile(true)
-                setTimeout(() => {
-                  const bankId = `${user.id}-br-${Date.now()}`
-                  updateUser(user.id, {
-                    bankResponses: [
-                      {
-                        id: bankId,
-                        fileName: bankUploadForm.customName.trim(),
-                        bank: bankUploadForm.bank,
-                        uploadedAt: new Date().toISOString().slice(0, 10),
-                        extractedJson: demoBankResponseData,
-                      },
-                      ...user.bankResponses,
-                    ],
-                  } as Partial<UserRecord>)
-                  toast.success('הקובץ הועלה בהצלחה')
-                  setUploadingBankFile(false)
-                  setBankUploadOpen(false)
-                }, 500)
-              }}
+              onClick={handleBankUpload}
             >
               {uploadingBankFile ? 'מעלה...' : 'העלאה'}
             </Button>

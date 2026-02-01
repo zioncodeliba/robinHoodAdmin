@@ -1,14 +1,14 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { usersSeed } from '@/lib/mock-data'
-import { createCustomer, fetchCustomers, updateCustomer, type CustomerCreateInput, type CustomerItem, type CustomerUpdateInput } from '@/lib/customers-api'
+import { createCustomer, deleteCustomer, fetchCustomers, updateCustomer, type CustomerCreateInput, type CustomerItem, type CustomerUpdateInput } from '@/lib/customers-api'
 import type { LeadStatus, MortgageType, UserRecord } from '@/types'
 
 type UsersContextValue = {
   users: UserRecord[]
   setUsers: React.Dispatch<React.SetStateAction<UserRecord[]>>
   updateUser: (id: string, patch: Partial<UserRecord>) => void
-  deleteUser: (id: string) => void
+  deleteUser: (id: string) => Promise<void>
   addUser: (data: CustomerCreateInput) => Promise<void>
   updateCustomer: (userId: string, data: CustomerUpdateInput) => Promise<void>
 }
@@ -91,9 +91,15 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)))
   }, [])
 
-  const deleteUser = React.useCallback((id: string) => {
-    setUsers((prev) => prev.filter((u) => u.id !== id))
-    toast.success('הלקוח נמחק')
+  const deleteUser = React.useCallback(async (id: string) => {
+    try {
+      await deleteCustomer(id)
+      setUsers((prev) => prev.filter((u) => u.id !== id))
+      toast.success('הלקוח נמחק')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת לקוח')
+      throw error
+    }
   }, [])
 
   const addUser = React.useCallback(async (data: CustomerCreateInput) => {

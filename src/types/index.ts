@@ -91,7 +91,7 @@ export type BankResponseFile = {
   fileName: string
   bank: BankName
   uploadedAt: string
-  extractedJson: BankResponseExtractedData
+  extractedJson: BankResponseExtractedData | null
 }
 
 export type SimulatorOfferBank = 'לאומי' | 'מזרחי-טפחות' | 'הצעה נבחרת'
