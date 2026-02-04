@@ -31,6 +31,7 @@ import { useUsers } from '@/lib/users-store'
 import { useAffiliates } from '@/lib/affiliates-store'
 import { useMessages } from '@/lib/messages-store'
 import { fetchChatHistoryForUser, type ChatHistoryItem } from '@/lib/chatbot-history-api'
+import { fetchCustomerBankVisibility, updateCustomerBankVisibility } from '@/lib/bank-visibility-api'
 import { downloadBankResponseFile, fetchBankResponses, uploadBankResponseForUser, type BankResponseItem } from '@/lib/bank-responses-api'
 import { downloadCustomerFile, fetchCustomerFiles } from '@/lib/customer-files-api'
 import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
@@ -64,6 +65,16 @@ const bankNameById: Record<number, BankName> = {
   12: 'מרכנתיל',
 }
 
+const BANK_VISIBILITY_ORDER = [3, 2, 1, 4, 8, 12]
+const BANK_VISIBILITY_OPTIONS = BANK_VISIBILITY_ORDER.map((id) => ({
+  id,
+  label: bankNameById[id] ?? `בנק ${id}`,
+}))
+
+const normalizeAllowedBankIds = (ids: number[]) =>
+  BANK_VISIBILITY_ORDER.filter((id) => ids.includes(id))
+
+
 const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
   id: item.id,
   templateId: item.template_id ?? '',
@@ -76,7 +87,7 @@ const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
 type BankProcessType = 'recycle' | 'new_loan'
 
 const resolveProcessType = (mortgageType?: MortgageType): BankProcessType =>
-  mortgageType === 'משכנתא חדשה' ? 'new_loan' : 'recycle'
+  mortgageType === 'מחזור משכנתא' ? 'recycle' : 'new_loan'
 
 const SYSTEM_SIGNATURE_PREFIX = 'system_signature_'
 const BANK_SIGNATURE_PREFIX = 'bank_signature_'
@@ -132,8 +143,8 @@ export function LeadDetail() {
     lastName: user?.lastName ?? '',
     phone: user?.phone ?? '',
     email: user?.email ?? '',
-    status: (user?.status ?? 'ממתין לאישור עקרוני') as LeadStatus,
-    mortgageType: (user?.mortgageType ?? 'משכנתא חדשה') as MortgageType,
+    status: (user?.status ?? 'נרשם') as LeadStatus,
+    mortgageType: (user?.mortgageType ?? '-') as MortgageType,
   })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -199,6 +210,9 @@ export function LeadDetail() {
   const [bankResponsesLoading, setBankResponsesLoading] = useState(false)
   const [systemFiles, setSystemFiles] = useState<{ id: string; originalName: string; uploadedAt: string }[]>([])
   const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
+  const [allowedBankIds, setAllowedBankIds] = useState<number[]>(BANK_VISIBILITY_ORDER)
+  const [bankVisibilityLoading, setBankVisibilityLoading] = useState(false)
+  const [bankVisibilitySaving, setBankVisibilitySaving] = useState(false)
 
   const selectedTemplate = useMemo(() => 
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
@@ -224,6 +238,28 @@ export function LeadDetail() {
       })
       .finally(() => {
         if (isMounted) setChatHistoryLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
+    setBankVisibilityLoading(true)
+    fetchCustomerBankVisibility(user.id)
+      .then((data) => {
+        if (!isMounted) return
+        const normalized = normalizeAllowedBankIds(data.allowed_bank_ids ?? [])
+        setAllowedBankIds(normalized)
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setAllowedBankIds(BANK_VISIBILITY_ORDER)
+      })
+      .finally(() => {
+        if (isMounted) setBankVisibilityLoading(false)
       })
     return () => {
       isMounted = false
@@ -332,6 +368,25 @@ export function LeadDetail() {
       isMounted = false
     }
   }, [user?.id, updateUser])
+
+  const toggleBankVisibility = async (bankId: number) => {
+    if (!user || bankVisibilitySaving) return
+    const prev = allowedBankIds
+    const next = prev.includes(bankId) ? prev.filter((id) => id !== bankId) : [...prev, bankId]
+    const ordered = normalizeAllowedBankIds(next)
+    setAllowedBankIds(ordered)
+    setBankVisibilitySaving(true)
+    try {
+      const updated = await updateCustomerBankVisibility(user.id, ordered)
+      setAllowedBankIds(normalizeAllowedBankIds(updated.allowed_bank_ids ?? []))
+      toast.success('הרשאות הבנקים עודכנו')
+    } catch (error) {
+      setAllowedBankIds(prev)
+      toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון הבנקים')
+    } finally {
+      setBankVisibilitySaving(false)
+    }
+  }
 
   const handleCustomerFileView = async (file: UserRecord['uploadedFiles'][number]) => {
     try {
@@ -454,6 +509,11 @@ export function LeadDetail() {
       })
       const mapped = mapBankResponseItem(created)
       updateUser(user.id, { bankResponses: [mapped, ...user.bankResponses] } as Partial<UserRecord>)
+      try {
+        await updateCustomer(user.id, { status: 'אישור עקרוני' })
+      } catch {
+        // Error toast is handled in the store.
+      }
       toast.success('הקובץ הועלה בהצלחה')
       setBankUploadOpen(false)
       setBankUploadForm({
@@ -574,13 +634,14 @@ export function LeadDetail() {
   const saveEdit = async () => {
     try {
       setEditSaving(true)
+      const mortgageType = form.mortgageType === '-' ? '' : form.mortgageType
       await updateCustomer(user.id, {
         first_name: form.firstName.trim(),
         last_name: form.lastName.trim(),
         phone: form.phone.trim(),
         mail: form.email.trim(),
         status: form.status,
-        mortgage_type: form.mortgageType,
+        mortgage_type: mortgageType,
       })
       setEditOpen(false)
     } catch {
@@ -901,6 +962,44 @@ export function LeadDetail() {
 
         <Tabs.Content value="files" className="mt-4 sm:mt-5">
           <div className="space-y-4 sm:space-y-6">
+            {/* 0) Bank visibility */}
+            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row-reverse sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">בנקים להצגה ללקוח</h2>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">
+                    הסרת סימון מסתירה את הבנק מרשימת ההצעות של הלקוח.
+                  </p>
+                </div>
+                {bankVisibilitySaving && (
+                  <span className="text-xs text-[var(--color-text-muted)]">שומר...</span>
+                )}
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {BANK_VISIBILITY_OPTIONS.map((bank) => (
+                  <label
+                    key={bank.id}
+                    className="flex items-center justify-between rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] px-3 py-2"
+                  >
+                    <span className="text-sm font-medium text-[var(--color-text)]">{bank.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={allowedBankIds.includes(bank.id)}
+                      onChange={() => void toggleBankVisibility(bank.id)}
+                      disabled={bankVisibilityLoading || bankVisibilitySaving}
+                      className="h-4 w-4 rounded"
+                      aria-label={`הצגת ${bank.label}`}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
+              </p>
+            </div>
+
             {/* 1) Uploaded files */}
             <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
@@ -1034,7 +1133,7 @@ export function LeadDetail() {
               <div className="flex flex-row-reverse items-center justify-between">
                 <div className="text-right">
                   <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצים לחתימה</h2>
-                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">סטטוס חתימה + שליחה חוזרת (דמו).</p>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">סטטוס חתימה + שליחה חוזרת.</p>
                 </div>
               </div>
 
@@ -1045,64 +1144,56 @@ export function LeadDetail() {
                     אין מסמכים לחתימה כרגע.
                   </div>
                 ) : (
-                  user.signatureDocs.map((d) => (
-                    <div key={d.id} className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 space-y-3">
-                      <div className="flex flex-row-reverse items-center gap-2">
-                        {d.status === 'נחתם' ? (
-                          <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                        ) : (
-                          <CircleDashed className="h-4 w-4 text-[var(--color-text-light)]" />
-                        )}
-                        <span className="text-sm font-semibold text-[var(--color-text)]">{d.name}</span>
-                      </div>
-                      <div className="flex flex-row-reverse items-center justify-between gap-2">
-                        <DropdownSelect<SignatureDocStatus>
-                          value={d.status}
-                          onChange={(v) => {
-                            updateUser(user.id, {
-                              signatureDocs: user.signatureDocs.map((x) =>
-                                x.id === d.id ? { ...x, status: v } : x
-                              ),
-                            } as Partial<UserRecord>)
-                          }}
-                          options={[
-                            { value: 'נחתם', label: 'נחתם' },
-                            { value: 'לא נחתם', label: 'לא נחתם' },
-                          ]}
-                          buttonClassName="min-w-[120px] justify-between bg-white text-xs"
-                          contentAlign="end"
-                        />
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => {
-                              void handleSystemFileView(d.id)
-                            }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
-                            aria-label="צפייה"
-                          >
-                            <Eye size={14} />
-                          </button>
-                          <button
-                            onClick={() => {
+                  user.signatureDocs.map((d) => {
+                    return (
+                      <div key={d.id} className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 space-y-3">
+                        <div className="flex flex-row-reverse items-center gap-2">
+                          {d.status === 'נחתם' ? (
+                            <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
+                          ) : (
+                            <CircleDashed className="h-4 w-4 text-[var(--color-text-light)]" />
+                          )}
+                          <span className="text-sm font-semibold text-[var(--color-text)]">{d.name}</span>
+                        </div>
+                        <div className="flex flex-row-reverse items-center justify-between gap-2">
+                          <DropdownSelect<SignatureDocStatus>
+                            value={d.status}
+                            onChange={(v) => {
                               updateUser(user.id, {
                                 signatureDocs: user.signatureDocs.map((x) =>
-                                  x.id === d.id ? { ...x, fileName: `${x.name}.pdf` } : x
+                                  x.id === d.id ? { ...x, status: v } : x
                                 ),
                               } as Partial<UserRecord>)
-                              toast.success(`הועלה (דמו): ${d.name}`)
                             }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
-                            aria-label="העלה"
-                          >
-                            <UploadCloud size={14} />
-                          </button>
-                          <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => toast.success(`נשלח מחדש (דמו): ${d.name}`)}>
-                            שלח
-                          </Button>
+                            options={[
+                              { value: 'נחתם', label: 'נחתם' },
+                              { value: 'לא נחתם', label: 'לא נחתם' },
+                            ]}
+                            buttonClassName="min-w-[120px] justify-between bg-white text-xs"
+                            contentAlign="end"
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                void handleSystemFileView(d.id)
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
+                              aria-label="צפייה"
+                            >
+                              <Eye size={14} />
+                            </button>
+                            <button
+                              onClick={() => void handleSystemFileDownload(d.id, d.fileName || d.name)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
+                              aria-label="הורדה"
+                            >
+                              <Download size={14} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
 
@@ -1120,8 +1211,7 @@ export function LeadDetail() {
                           <th className="px-4 py-3 text-right font-medium">מסמך</th>
                           <th className="px-4 py-3 text-right font-medium">סטטוס</th>
                           <th className="px-4 py-3 text-center font-medium">צפייה</th>
-                          <th className="px-4 py-3 text-center font-medium">העלאה</th>
-                          <th className="px-4 py-3 text-center font-medium">שליחה</th>
+                          <th className="px-4 py-3 text-center font-medium">הורדה</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1169,36 +1259,13 @@ export function LeadDetail() {
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button
-                                onClick={() => {
-                                  updateUser(user.id, {
-                                    signatureDocs: user.signatureDocs.map((x) =>
-                                      x.id === d.id
-                                        ? {
-                                            ...x,
-                                            fileName: `${x.name}.pdf`,
-                                          }
-                                        : x
-                                    ),
-                                  } as Partial<UserRecord>)
-                                  toast.success(`הועלה (דמו): ${d.name}`)
-                                }}
+                                onClick={() => void handleSystemFileDownload(d.id, d.fileName || d.name)}
                                 className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
-                                aria-label="העלאת מסמך"
-                                title="העלה"
+                                aria-label="הורדת מסמך"
+                                title="הורדה"
                               >
-                                <UploadCloud size={16} />
+                                <Download size={16} />
                               </button>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  toast.success(`נשלח מחדש (דמו): ${d.name}`)
-                                }}
-                              >
-                                שלח
-                              </Button>
                             </td>
                           </tr>
                         ))}
@@ -2015,6 +2082,7 @@ export function LeadDetail() {
                   value={form.mortgageType}
                   onChange={(v) => setForm((p) => ({ ...p, mortgageType: v }))}
                   options={[
+                    { value: '-', label: '-' },
                     { value: 'משכנתא חדשה', label: 'משכנתא חדשה' },
                     { value: 'מחזור משכנתא', label: 'מחזור משכנתא' },
                   ]}
@@ -2031,6 +2099,11 @@ export function LeadDetail() {
                   value={form.status}
                   onChange={(v) => setForm((p) => ({ ...p, status: v }))}
                   options={[
+                    { value: 'נרשם', label: 'נרשם' },
+                    { value: 'שיחה עם הצ׳אט', label: 'שיחה עם הצ׳אט' },
+                    { value: 'חוסר התאמה', label: 'חוסר התאמה' },
+                    { value: 'סיום צ׳אט בהצלחה', label: 'סיום צ׳אט בהצלחה' },
+                    { value: 'העלאת קבצים', label: 'העלאת קבצים' },
                     { value: 'ממתין לאישור עקרוני', label: 'ממתין לאישור עקרוני' },
                     { value: 'אישור עקרוני', label: 'אישור עקרוני' },
                     { value: 'שיחת תמהיל', label: 'שיחת תמהיל' },

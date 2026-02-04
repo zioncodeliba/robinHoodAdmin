@@ -19,6 +19,11 @@ import type { Gender } from '@/lib/auth-api'
 import type { LeadStatus, MessageTemplate } from '@/types'
 
 const leadStatusOptions: { value: LeadStatus; label: string }[] = [
+  { value: 'נרשם', label: 'נרשם' },
+  { value: 'שיחה עם הצ׳אט', label: 'שיחה עם הצ׳אט' },
+  { value: 'חוסר התאמה', label: 'חוסר התאמה' },
+  { value: 'סיום צ׳אט בהצלחה', label: 'סיום צ׳אט בהצלחה' },
+  { value: 'העלאת קבצים', label: 'העלאת קבצים' },
   { value: 'ממתין לאישור עקרוני', label: 'ממתין לאישור עקרוני' },
   { value: 'אישור עקרוני', label: 'אישור עקרוני' },
   { value: 'שיחת תמהיל', label: 'שיחת תמהיל' },

@@ -1,9 +1,15 @@
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { mockLeads } from '@/lib/mock-data'
 import { formatShortDate } from '@/lib/utils'
+import { useUsers } from '@/lib/users-store'
 import type { LeadStatus, MortgageType } from '@/types'
 
 const statusStyles: Record<LeadStatus, string> = {
+  'נרשם': 'bg-slate-100 text-slate-700',
+  'שיחה עם הצ׳אט': 'bg-emerald-100 text-emerald-700',
+  'חוסר התאמה': 'bg-rose-100 text-rose-700',
+  'סיום צ׳אט בהצלחה': 'bg-lime-100 text-lime-700',
+  'העלאת קבצים': 'bg-indigo-100 text-indigo-700',
   'ממתין לאישור עקרוני': 'bg-blue-100 text-blue-700',
   'אישור עקרוני': 'bg-sky-100 text-sky-700',
   'שיחת תמהיל': 'bg-amber-100 text-amber-700',
@@ -16,19 +22,29 @@ const statusStyles: Record<LeadStatus, string> = {
 }
 
 const mortgageTypeStyles: Record<MortgageType, string> = {
+  '-': 'bg-slate-100 text-slate-600',
   'משכנתא חדשה': 'bg-purple-100 text-purple-700',
   'מחזור משכנתא': 'bg-cyan-100 text-cyan-700',
 }
 
 export function RecentLeadsTable() {
   const navigate = useNavigate()
+  const { users } = useUsers()
+
+  const recentLeads = useMemo(() => {
+    const next = [...users]
+    next.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    return next
+  }, [users])
+
+  const visibleLeads = recentLeads.slice(0, 5)
 
   return (
     <div className="rounded-2xl border border-[var(--color-border-light)] bg-white shadow-[var(--shadow-card)]">
       <div className="flex items-center justify-between gap-4 p-4 sm:p-6">
         <div>
           <h3 className="text-base sm:text-lg font-semibold text-[var(--color-text)]">לקוחות חדשים</h3>
-          <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">{mockLeads.length} סה״כ לקוחות</p>
+          <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">{users.length} סה״כ לקוחות</p>
         </div>
         <button
           onClick={() => navigate('/users')}
@@ -40,7 +56,7 @@ export function RecentLeadsTable() {
 
       {/* Mobile Card View */}
       <div className="block md:hidden px-4 pb-4 space-y-3">
-        {mockLeads.slice(0, 5).map((lead) => (
+        {visibleLeads.map((lead) => (
           <div
             key={lead.id}
             className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 cursor-pointer"
@@ -65,6 +81,11 @@ export function RecentLeadsTable() {
             </div>
           </div>
         ))}
+        {visibleLeads.length === 0 && (
+          <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-sm text-[var(--color-text-muted)]">
+            לא נמצאו לקוחות
+          </div>
+        )}
       </div>
 
       {/* Desktop Table */}
@@ -81,7 +102,7 @@ export function RecentLeadsTable() {
             </tr>
           </thead>
           <tbody>
-            {mockLeads.map((lead) => (
+            {recentLeads.map((lead) => (
               <tr
                 key={lead.id}
                 className="border-t border-[var(--color-border-light)] hover:bg-[var(--color-background)] cursor-pointer"
@@ -105,6 +126,13 @@ export function RecentLeadsTable() {
                 <td className="px-6 py-4 text-[var(--color-text-muted)]">{formatShortDate(lead.lastActivityAt)}</td>
               </tr>
             ))}
+            {recentLeads.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-6 py-10 text-center text-[var(--color-text-muted)]">
+                  לא נמצאו לקוחות
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

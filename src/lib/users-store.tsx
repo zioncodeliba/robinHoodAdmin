@@ -16,6 +16,11 @@ type UsersContextValue = {
 const UsersContext = React.createContext<UsersContextValue | null>(null)
 
 const leadStatusOptions: LeadStatus[] = [
+  'נרשם',
+  'שיחה עם הצ׳אט',
+  'חוסר התאמה',
+  'סיום צ׳אט בהצלחה',
+  'העלאת קבצים',
   'ממתין לאישור עקרוני',
   'אישור עקרוני',
   'שיחת תמהיל',
@@ -27,15 +32,19 @@ const leadStatusOptions: LeadStatus[] = [
   'מחזור - ניטור',
 ]
 
-const mortgageTypeOptions: MortgageType[] = ['משכנתא חדשה', 'מחזור משכנתא']
+const mortgageTypeOptions: MortgageType[] = ['-', 'משכנתא חדשה', 'מחזור משכנתא']
 
-const mapStatus = (value: string): LeadStatus => (
-  leadStatusOptions.includes(value as LeadStatus) ? (value as LeadStatus) : 'ממתין לאישור עקרוני'
-)
+const mapStatus = (value: string): LeadStatus => {
+  const trimmed = value?.trim?.() ?? ''
+  if (trimmed.startsWith('נשלחה בקשה ל')) return 'סיום צ׳אט בהצלחה'
+  return leadStatusOptions.includes(trimmed as LeadStatus) ? (trimmed as LeadStatus) : 'נרשם'
+}
 
-const mapMortgageType = (value: string): MortgageType => (
-  mortgageTypeOptions.includes(value as MortgageType) ? (value as MortgageType) : 'משכנתא חדשה'
-)
+const mapMortgageType = (value: string): MortgageType => {
+  const trimmed = value?.trim?.() ?? ''
+  if (!trimmed) return '-'
+  return mortgageTypeOptions.includes(trimmed as MortgageType) ? (trimmed as MortgageType) : '-'
+}
 
 const mapCustomer = (item: CustomerItem): UserRecord => {
   const createdAt = item.created_at ?? new Date().toISOString()

@@ -1,4 +1,9 @@
 export type LeadStatus =
+  | 'נרשם'
+  | 'שיחה עם הצ׳אט'
+  | 'חוסר התאמה'
+  | 'סיום צ׳אט בהצלחה'
+  | 'העלאת קבצים'
   | 'ממתין לאישור עקרוני'
   | 'אישור עקרוני'
   | 'שיחת תמהיל'
@@ -9,7 +14,7 @@ export type LeadStatus =
   | 'מחזור - יש הצעה'
   | 'מחזור - ניטור'
 
-export type MortgageType = 'מחזור משכנתא' | 'משכנתא חדשה'
+export type MortgageType = '-' | 'מחזור משכנתא' | 'משכנתא חדשה'
 
 export interface Lead {
   id: string

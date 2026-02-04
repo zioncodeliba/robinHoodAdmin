@@ -1,36 +1,8 @@
-import type { LeadStatus } from '@/types'
-import { getStoredAuth } from '@/lib/auth-storage'
+import { getActiveAdminAuth } from '@/lib/auth-storage'
 
-export type CustomerCreateInput = {
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  gender: 'male' | 'female'
-}
-
-export type CustomerUpdateInput = Partial<Omit<CustomerCreateInput, 'gender'>> & {
-  gender?: never
-}
-
-export type CustomerItem = {
-  id: string
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  created_at: string
-  last_activity_at: string
-}
-
-export type CustomerDeleteResponse = {
-  message: string
-  id: string
-  deleted: boolean
+export type CustomerBankVisibility = {
+  user_id: string
+  allowed_bank_ids: number[]
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -58,7 +30,7 @@ function getErrorMessage(payload: unknown, fallback: string) {
 }
 
 function getAuthHeader() {
-  const auth = getStoredAuth()
+  const auth = getActiveAdminAuth()
   if (!auth?.accessToken) {
     throw new Error('Missing auth token')
   }
@@ -87,26 +59,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload
 }
 
-export async function fetchCustomers(): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>('/customers')
+export async function fetchCustomerBankVisibility(userId: string): Promise<CustomerBankVisibility> {
+  return request<CustomerBankVisibility>(`/customers/${userId}/bank-visibility`)
 }
 
-export async function createCustomer(payload: CustomerCreateInput): Promise<CustomerItem> {
-  return request<CustomerItem>('/customers', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function updateCustomer(userId: string, payload: CustomerUpdateInput): Promise<CustomerItem> {
-  return request<CustomerItem>(`/customers/${userId}`, {
+export async function updateCustomerBankVisibility(
+  userId: string,
+  allowedBankIds: number[]
+): Promise<CustomerBankVisibility> {
+  return request<CustomerBankVisibility>(`/customers/${userId}/bank-visibility`, {
     method: 'PATCH',
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteCustomer(userId: string): Promise<CustomerDeleteResponse> {
-  return request<CustomerDeleteResponse>(`/customers/${userId}`, {
-    method: 'DELETE',
+    body: JSON.stringify({ allowed_bank_ids: allowedBankIds }),
   })
 }

@@ -14,6 +14,11 @@ import { useUsers } from '@/lib/users-store'
 type StatusFilter = 'הכל' | LeadStatus
 
 const statusStyles: Record<LeadStatus, string> = {
+  'נרשם': 'bg-slate-100 text-slate-700',
+  'שיחה עם הצ׳אט': 'bg-emerald-100 text-emerald-700',
+  'חוסר התאמה': 'bg-rose-100 text-rose-700',
+  'סיום צ׳אט בהצלחה': 'bg-lime-100 text-lime-700',
+  'העלאת קבצים': 'bg-indigo-100 text-indigo-700',
   'ממתין לאישור עקרוני': 'bg-blue-100 text-blue-700',
   'אישור עקרוני': 'bg-cyan-100 text-cyan-700',
   'שיחת תמהיל': 'bg-amber-100 text-amber-700',
@@ -26,6 +31,7 @@ const statusStyles: Record<LeadStatus, string> = {
 }
 
 const mortgageTypeStyles: Record<MortgageType, string> = {
+  '-': 'bg-slate-100 text-slate-600',
   'משכנתא חדשה': 'bg-purple-100 text-purple-700',
   'מחזור משכנתא': 'bg-cyan-100 text-cyan-700',
 }
@@ -56,8 +62,8 @@ export function LeadsList() {
     lastName: '',
     phone: '',
     email: '',
-    status: 'ממתין לאישור עקרוני' as LeadStatus,
-    mortgageType: 'משכנתא חדשה' as MortgageType,
+    status: 'נרשם' as LeadStatus,
+    mortgageType: '-' as MortgageType,
     gender: 'male' as Gender,
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -125,8 +131,8 @@ export function LeadsList() {
       lastName: '',
       phone: '',
       email: '',
-      status: 'ממתין לאישור עקרוני',
-      mortgageType: 'משכנתא חדשה',
+      status: 'נרשם',
+      mortgageType: '-',
       gender: 'male',
     })
     setModalMode('create')
@@ -148,13 +154,14 @@ export function LeadsList() {
     if (!validate()) return
     try {
       setIsSubmitting(true)
+      const mortgageType = form.mortgageType === '-' ? '' : form.mortgageType
       await addUser({
         first_name: form.firstName.trim(),
         last_name: form.lastName.trim(),
         mail: form.email.trim(),
         phone: form.phone.trim(),
         status: form.status,
-        mortgage_type: form.mortgageType,
+        mortgage_type: mortgageType,
         gender: form.gender,
       })
       setModalOpen(false)
@@ -211,6 +218,11 @@ export function LeadsList() {
                 }}
                 options={[
                   { value: 'הכל', label: 'כל הסטטוסים' },
+                  { value: 'נרשם', label: 'נרשם' },
+                  { value: 'שיחה עם הצ׳אט', label: 'שיחה עם הצ׳אט' },
+                  { value: 'חוסר התאמה', label: 'חוסר התאמה' },
+                  { value: 'סיום צ׳אט בהצלחה', label: 'סיום צ׳אט בהצלחה' },
+                  { value: 'העלאת קבצים', label: 'העלאת קבצים' },
                   { value: 'ממתין לאישור עקרוני', label: 'ממתין לאישור עקרוני' },
                   { value: 'אישור עקרוני', label: 'אישור עקרוני' },
                   { value: 'שיחת תמהיל', label: 'שיחת תמהיל' },
@@ -515,6 +527,11 @@ export function LeadsList() {
                       value={form.status}
                       onChange={(v) => setForm((p) => ({ ...p, status: v }))}
                       options={[
+                        { value: 'נרשם', label: 'נרשם' },
+                        { value: 'שיחה עם הצ׳אט', label: 'שיחה עם הצ׳אט' },
+                        { value: 'חוסר התאמה', label: 'חוסר התאמה' },
+                        { value: 'סיום צ׳אט בהצלחה', label: 'סיום צ׳אט בהצלחה' },
+                        { value: 'העלאת קבצים', label: 'העלאת קבצים' },
                         { value: 'ממתין לאישור עקרוני', label: 'ממתין לאישור עקרוני' },
                         { value: 'אישור עקרוני', label: 'אישור עקרוני' },
                         { value: 'שיחת תמהיל', label: 'שיחת תמהיל' },
@@ -538,6 +555,7 @@ export function LeadsList() {
                       value={form.mortgageType}
                       onChange={(v) => setForm((p) => ({ ...p, mortgageType: v }))}
                       options={[
+                        { value: '-', label: '-' },
                         { value: 'משכנתא חדשה', label: 'משכנתא חדשה' },
                         { value: 'מחזור משכנתא', label: 'מחזור משכנתא' },
                       ]}
