@@ -1,4 +1,4 @@
-import { getStoredAuth } from '@/lib/auth-storage'
+import { forceLogout, getStoredAuth } from '@/lib/auth-storage'
 import type { LoggedUser } from '@/lib/auth-api'
 
 export type AdminProfileUpdateInput = {
@@ -54,6 +54,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...getAuthHeader(),
     },
   })
+  if (response.status === 401 || response.status === 403) {
+    forceLogout()
+    throw new Error('Session expired')
+  }
 
   const payload = await parseJson<T>(response)
   if (!response.ok) {

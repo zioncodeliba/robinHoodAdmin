@@ -76,3 +76,10 @@ export function getActiveAdminAuth(): StoredAuth | null {
 export function clearAuth() {
   localStorage.removeItem(STORAGE_KEY)
 }
+
+export function forceLogout() {
+  clearAuth()
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login'
+  }
+}

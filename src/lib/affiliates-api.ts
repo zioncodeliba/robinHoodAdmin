@@ -1,33 +1,53 @@
-import type { LeadStatus } from '@/types'
 import { forceLogout, getStoredAuth } from '@/lib/auth-storage'
+import type { AffiliateStatus } from '@/types'
 
-export type CustomerCreateInput = {
+export type AffiliateCreateInput = {
   first_name: string
   last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  gender: 'male' | 'female'
+  status: AffiliateStatus
+  code?: string
+  email?: string
+  phone?: string
+  address?: string
+  internal_notes?: string
+  beneficiary_name?: string
+  bank_name?: string
+  branch_number?: string
+  account_number?: string
+  iban?: string
+  swift?: string
 }
 
-export type CustomerUpdateInput = Partial<Omit<CustomerCreateInput, 'gender'>> & {
-  gender?: never
-}
-
-export type CustomerItem = {
+export type AffiliateItem = {
   id: string
+  code: string
+  status: AffiliateStatus
   first_name: string
   last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
+  email?: string
+  phone?: string
+  address?: string
+  internal_notes?: string
+  beneficiary_name?: string
+  bank_name?: string
+  branch_number?: string
+  account_number?: string
+  iban?: string
+  swift?: string
+  clicks: number
+  conversions: number
+  withdrawal_requested: boolean
   created_at: string
-  last_activity_at: string
+  updated_at: string
 }
 
-export type CustomerDeleteResponse = {
+export type AffiliateUpdateInput = Partial<AffiliateCreateInput> & {
+  withdrawal_requested?: boolean
+  clicks?: number
+  conversions?: number
+}
+
+export type AffiliateDeleteResponse = {
   message: string
   id: string
   deleted: boolean
@@ -91,30 +111,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload
 }
 
-export async function fetchCustomers(): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>('/customers')
+export async function fetchAffiliates(): Promise<AffiliateItem[]> {
+  return request<AffiliateItem[]>('/affiliates')
 }
 
-export async function fetchAffiliateCustomers(affiliateId: string): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>(`/affiliates/${affiliateId}/customers`)
-}
-
-export async function createCustomer(payload: CustomerCreateInput): Promise<CustomerItem> {
-  return request<CustomerItem>('/customers', {
+export async function createAffiliate(payload: AffiliateCreateInput): Promise<AffiliateItem> {
+  return request<AffiliateItem>('/affiliates', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export async function updateCustomer(userId: string, payload: CustomerUpdateInput): Promise<CustomerItem> {
-  return request<CustomerItem>(`/customers/${userId}`, {
+export async function updateAffiliate(
+  affiliateId: string,
+  payload: AffiliateUpdateInput
+): Promise<AffiliateItem> {
+  return request<AffiliateItem>(`/affiliates/${affiliateId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }
 
-export async function deleteCustomer(userId: string): Promise<CustomerDeleteResponse> {
-  return request<CustomerDeleteResponse>(`/customers/${userId}`, {
+export async function deleteAffiliate(affiliateId: string): Promise<AffiliateDeleteResponse> {
+  return request<AffiliateDeleteResponse>(`/affiliates/${affiliateId}`, {
     method: 'DELETE',
   })
 }

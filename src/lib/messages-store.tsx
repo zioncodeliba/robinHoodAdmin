@@ -28,7 +28,7 @@ const initialTemplates: MessageTemplate[] = [
   {
     id: 'tpl-2',
     name: 'זימון לשיחת תמהיל',
-    trigger: 'שיחת תמהיל',
+    trigger: 'שיחת תגכהמהיל',
     message: 'שלום {שם}, אנחנו מזמינים אותך לשיחת תמהיל לקביעת פרטי המשכנתא. אנא צור קשר לתיאום מועד.',
     createdAt: '2025-01-02',
   },

@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ArrowRight, Plus, Trash2, BarChart3, Building2, UserRound, Pencil, Banknote } from 'lucide-react'
 import {
@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { formatShortDate } from '@/lib/utils'
 import { useAffiliateById, useAffiliates } from '@/lib/affiliates-store'
+import { fetchAffiliateCustomers, type CustomerItem } from '@/lib/customers-api'
 
 function formatCurrencyILS(value: number) {
   return new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(value)
@@ -58,6 +59,10 @@ export function AffiliateDetail() {
     reference: '',
   })
 
+  const [affiliateCustomers, setAffiliateCustomers] = useState<CustomerItem[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
+  const [customersError, setCustomersError] = useState<string | null>(null)
+
   const [editForm, setEditForm] = useState({
     name: '',
     code: '',
@@ -79,6 +84,31 @@ export function AffiliateDetail() {
     const due = Math.max(0, earnings - paid)
     return { earnings, paid, due }
   }, [affiliate])
+
+  useEffect(() => {
+    if (!affiliate?.id) return
+    let isMounted = true
+    setCustomersLoading(true)
+    setCustomersError(null)
+    fetchAffiliateCustomers(affiliate.id)
+      .then((rows) => {
+        if (!isMounted) return
+        setAffiliateCustomers(rows)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        const message = error instanceof Error ? error.message : 'שגיאה בטעינת לקוחות'
+        setCustomersError(message)
+        setAffiliateCustomers([])
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setCustomersLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [affiliate?.id])
 
   if (!affiliate) {
     return (
@@ -114,7 +144,7 @@ export function AffiliateDetail() {
     setEditOpen(true)
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     const name = editForm.name.trim()
     const code = editForm.code.trim().toUpperCase()
     if (!name) return toast.error('נא למלא שם שותף')
@@ -128,26 +158,30 @@ export function AffiliateDetail() {
       !!editForm.iban.trim() ||
       !!editForm.swift.trim()
 
-    updateAffiliate(affiliate.id, {
-      name,
-      code,
-      email: editForm.email.trim() || undefined,
-      phone: editForm.phone.trim() || undefined,
-      address: editForm.address.trim() || undefined,
-      bankDetails: hasAnyBank
-        ? {
-            beneficiaryName: editForm.beneficiaryName.trim() || name,
-            bankName: editForm.bankName.trim() || '—',
-            branchNumber: editForm.branchNumber.trim() || '—',
-            accountNumber: editForm.accountNumber.trim() || '—',
-            iban: editForm.iban.trim() || undefined,
-            swift: editForm.swift.trim() || undefined,
-          }
-        : undefined,
-    })
-
-    toast.success('פרטי השותף עודכנו')
-    setEditOpen(false)
+    try {
+      await updateAffiliate(affiliate.id, {
+        name,
+        code,
+        email: editForm.email.trim() || undefined,
+        phone: editForm.phone.trim() || undefined,
+        address: editForm.address.trim() || undefined,
+        bankDetails: hasAnyBank
+          ? {
+              beneficiaryName: editForm.beneficiaryName.trim() || name,
+              bankName: editForm.bankName.trim() || '—',
+              branchNumber: editForm.branchNumber.trim() || '—',
+              accountNumber: editForm.accountNumber.trim() || '—',
+              iban: editForm.iban.trim() || undefined,
+              swift: editForm.swift.trim() || undefined,
+            }
+          : undefined,
+      })
+      toast.success('פרטי השותף עודכנו')
+      setEditOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'שגיאה בעדכון השותף'
+      toast.error(message)
+    }
   }
 
   return (
@@ -180,9 +214,14 @@ export function AffiliateDetail() {
             <span className="sm:hidden">עריכה</span>
           </Button>
           <button
-            onClick={() => {
-              updateAffiliate(affiliate.id, { status: affiliate.status === 'פעיל' ? 'לא פעיל' : 'פעיל' })
-              toast.success('הסטטוס עודכן')
+            onClick={async () => {
+              try {
+                await updateAffiliate(affiliate.id, { status: affiliate.status === 'פעיל' ? 'לא פעיל' : 'פעיל' })
+                toast.success('הסטטוס עודכן')
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'שגיאה בעדכון סטטוס'
+                toast.error(message)
+              }
             }}
             className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors cursor-pointer ${
               affiliate.status === 'פעיל'
@@ -195,9 +234,14 @@ export function AffiliateDetail() {
           <Button
             variant={affiliate.withdrawalRequested ? 'danger' : 'outline'}
             className="flex-1 sm:flex-none"
-            onClick={() => {
-              updateAffiliate(affiliate.id, { withdrawalRequested: !affiliate.withdrawalRequested })
-              toast.success(affiliate.withdrawalRequested ? 'בקשת המשיכה בוטלה' : 'סומן כביקש משיכה')
+            onClick={async () => {
+              try {
+                await updateAffiliate(affiliate.id, { withdrawalRequested: !affiliate.withdrawalRequested })
+                toast.success(affiliate.withdrawalRequested ? 'בקשת המשיכה בוטלה' : 'סומן כביקש משיכה')
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'שגיאה בעדכון בקשת משיכה'
+                toast.error(message)
+              }
             }}
           >
             <Banknote size={18} />
@@ -398,6 +442,110 @@ export function AffiliateDetail() {
         </div>
       </div>
 
+      {/* Affiliate customers */}
+      <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between" dir="rtl">
+          <div className="text-right">
+            <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">לקוחות משויכים לשותף</h2>
+            <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">
+              לקוחות שנרשמו או התחברו עם קוד השותף.
+            </p>
+          </div>
+          <span className="text-xs sm:text-sm text-[var(--color-text-muted)]">
+            סה״כ: {affiliateCustomers.length}
+          </span>
+        </div>
+
+        {customersLoading ? (
+          <div className="mt-4 rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+            טוען לקוחות...
+          </div>
+        ) : customersError ? (
+          <div className="mt-4 rounded-xl bg-red-50 p-4 text-center text-xs text-red-600">
+            {customersError}
+          </div>
+        ) : (
+          <>
+            {/* Mobile Card View */}
+            <div className="mt-4 space-y-3 sm:hidden">
+              {affiliateCustomers.length === 0 ? (
+                <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                  לא נמצאו לקוחות משויכים.
+                </div>
+              ) : (
+                affiliateCustomers.map((c) => (
+                  <div key={c.id} className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--color-text)] truncate">
+                          {`${c.first_name} ${c.last_name}`.trim() || '—'}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                          {c.phone || '—'}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                          {c.mail || '—'}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-[var(--color-background)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                        {c.status || '—'}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-[var(--color-text-muted)]">
+                      <span>סוג: {c.mortgage_type || '—'}</span>
+                      <span>{formatShortDate(c.created_at)}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="mt-5 hidden overflow-x-auto sm:block">
+              <table className="w-full text-sm" dir="rtl">
+                <thead>
+                  <tr className="border-t border-[var(--color-border-light)] text-[var(--color-text-muted)]">
+                    <th className="px-4 py-3 text-right font-medium">שם</th>
+                    <th className="px-4 py-3 text-right font-medium">טלפון</th>
+                    <th className="px-4 py-3 text-right font-medium">אימייל</th>
+                    <th className="px-4 py-3 text-right font-medium">סטטוס</th>
+                    <th className="px-4 py-3 text-right font-medium">סוג משכנתא</th>
+                    <th className="px-4 py-3 text-right font-medium">תאריך</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {affiliateCustomers.map((c) => (
+                    <tr key={c.id} className="border-t border-[var(--color-border-light)]">
+                      <td className="px-4 py-3 font-medium text-[var(--color-text)]">
+                        {`${c.first_name} ${c.last_name}`.trim() || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">
+                        {c.phone || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">
+                        {c.mail || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.status || '—'}</td>
+                      <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.mortgage_type || '—'}</td>
+                      <td className="px-4 py-3 text-[var(--color-text-muted)]">
+                        {formatShortDate(c.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                  {affiliateCustomers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-[var(--color-text-muted)]">
+                        לא נמצאו לקוחות משויכים.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Add payment modal */}
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
         <DialogContent>
@@ -553,5 +701,3 @@ export function AffiliateDetail() {
     </div>
   )
 }
-
-

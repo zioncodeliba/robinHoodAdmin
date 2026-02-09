@@ -154,7 +154,7 @@ export function AffiliatesList() {
     setModalOpen(true)
   }
 
-  const submitCreate = () => {
+  const submitCreate = async () => {
     const name = `${form.firstName.trim()} ${form.lastName.trim()}`.trim()
     if (!form.firstName.trim() || !form.lastName.trim()) {
       toast.error('נא למלא שם פרטי ושם משפחה')
@@ -163,28 +163,34 @@ export function AffiliatesList() {
 
     // Auto-generate code
     const autoCode = `AFF-${Date.now().toString(36).toUpperCase()}`
+    try {
+      await addAffiliate({
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        code: autoCode,
+        status: form.status,
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        address: form.address.trim() || undefined,
+        internalNotes: form.internalNotes.trim() || undefined,
+        bankDetails: form.bankName || form.branchNumber || form.accountNumber || form.beneficiaryName
+          ? {
+              beneficiaryName: form.beneficiaryName.trim() || name,
+              bankName: form.bankName.trim() || '—',
+              branchNumber: form.branchNumber.trim() || '—',
+              accountNumber: form.accountNumber.trim() || '—',
+              iban: form.iban.trim() || undefined,
+              swift: form.swift.trim() || undefined,
+            }
+          : undefined,
+      })
 
-    addAffiliate({
-      name,
-      code: autoCode,
-      status: form.status,
-      email: form.email.trim() || undefined,
-      phone: form.phone.trim() || undefined,
-      address: form.address.trim() || undefined,
-      bankDetails: form.bankName || form.branchNumber || form.accountNumber || form.beneficiaryName
-        ? {
-            beneficiaryName: form.beneficiaryName.trim() || name,
-            bankName: form.bankName.trim() || '—',
-            branchNumber: form.branchNumber.trim() || '—',
-            accountNumber: form.accountNumber.trim() || '—',
-            iban: form.iban.trim() || undefined,
-            swift: form.swift.trim() || undefined,
-          }
-        : undefined,
-    })
-
-    toast.success('השותף נוסף בהצלחה')
-    setModalOpen(false)
+      toast.success('השותף נוסף בהצלחה')
+      setModalOpen(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'שגיאה בהוספת שותף'
+      toast.error(message)
+    }
   }
 
   return (
