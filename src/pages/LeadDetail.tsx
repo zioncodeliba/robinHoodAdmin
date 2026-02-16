@@ -13,6 +13,7 @@ import {
   Calculator,
   Eye,
   UploadCloud,
+  Check,
   CheckCircle2,
   CircleDashed,
   Send,
@@ -32,7 +33,7 @@ import { useAffiliates } from '@/lib/affiliates-store'
 import { useMessages } from '@/lib/messages-store'
 import { fetchChatHistoryForUser, type ChatHistoryItem } from '@/lib/chatbot-history-api'
 import { fetchCustomerBankVisibility, updateCustomerBankVisibility } from '@/lib/bank-visibility-api'
-import { downloadBankResponseFile, fetchBankResponses, uploadBankResponseForUser, type BankResponseItem } from '@/lib/bank-responses-api'
+import { deleteBankResponse, downloadBankResponseFile, fetchBankResponses, uploadBankResponseForUser, type BankResponseItem } from '@/lib/bank-responses-api'
 import { downloadCustomerFile, fetchCustomerFiles } from '@/lib/customer-files-api'
 import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
 import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
@@ -66,10 +67,19 @@ const bankNameById: Record<number, BankName> = {
 }
 
 const BANK_VISIBILITY_ORDER = [3, 2, 1, 4, 8, 12]
-const BANK_VISIBILITY_OPTIONS = BANK_VISIBILITY_ORDER.map((id) => ({
-  id,
-  label: bankNameById[id] ?? `בנק ${id}`,
-}))
+const BANK_VISIBILITY_OPTIONS: Array<{
+  id: number
+  label: string
+  logoSrc: string
+  logoAlt: string
+}> = [
+  { id: 3, label: 'הפועלים', logoSrc: '/banks/hapoalim.svg', logoAlt: 'לוגו בנק הפועלים' },
+  { id: 2, label: 'לאומי', logoSrc: '/banks/leumi.svg', logoAlt: 'לוגו בנק לאומי' },
+  { id: 1, label: 'מזרחי-טפחות', logoSrc: '/banks/mizrahi.svg', logoAlt: 'לוגו בנק מזרחי-טפחות' },
+  { id: 4, label: 'דיסקונט', logoSrc: '/banks/discount.svg', logoAlt: 'לוגו בנק דיסקונט' },
+  { id: 8, label: 'הבינלאומי', logoSrc: '/banks/international-logo.png', logoAlt: 'לוגו הבנק הבינלאומי' },
+  { id: 12, label: 'מרכנתיל', logoSrc: '/banks/mercantile.svg', logoAlt: 'לוגו בנק מרכנתיל' },
+]
 
 const normalizeAllowedBankIds = (ids: number[]) =>
   BANK_VISIBILITY_ORDER.filter((id) => ids.includes(id))
@@ -92,7 +102,7 @@ const resolveProcessType = (mortgageType?: MortgageType): BankProcessType =>
 const SYSTEM_SIGNATURE_PREFIX = 'system_signature_'
 const BANK_SIGNATURE_PREFIX = 'bank_signature_'
 
-type ActiveTab = 'questionnaire' | 'files' | 'simulator' | 'updates'
+type ActiveTab = 'questionnaire' | 'files' | 'banks' | 'simulator' | 'updates'
 type SimulatorTab = 'לאומי' | 'מזרחי-טפחות' | 'הצעה נבחרת'
 
 function InfoTile({
@@ -497,7 +507,7 @@ export function LeadDetail() {
     const uploadFile = uploadName === rawFile.name
       ? rawFile
       : new File([rawFile], uploadName, { type: rawFile.type })
-    const scanType = bankUploadForm.processType === 'new_loan' ? 'new_loan' : undefined
+    const scanType = bankUploadForm.processType
 
     try {
       setUploadingBankFile(true)
@@ -581,18 +591,7 @@ export function LeadDetail() {
       fields: [
         { label: 'שאלה', value: formatHistoryValue(item.block_message) },
         { label: 'תשובה', value: formatHistoryValue(item.user_input ?? item.option_label) },
-        { label: 'תשובת אפשרות', value: formatHistoryValue(item.option_label) },
-        { label: 'קלט חופשי', value: formatHistoryValue(item.user_input) },
-        { label: 'מזהה בלוק', value: formatHistoryValue(item.block_id) },
-        { label: 'בלוק key', value: formatHistoryValue(item.block_key) },
-        { label: 'מזהה אפשרות', value: formatHistoryValue(item.selected_option_id) },
-        { label: 'סוג אפשרות', value: formatHistoryValue(item.option_type) },
-        { label: 'מזהה סשן', value: formatHistoryValue(item.session_id) },
         { label: 'זמן', value: formatHistoryValue(formatHistoryTimestamp(item.timestamp)) },
-        { label: 'סטטוס משוב', value: formatHistoryValue(item.feedback_status) },
-        { label: 'הודעת משוב', value: formatHistoryValue(item.feedback_message) },
-        { label: 'מנע חזרה', value: item.prevent_rollback ? 'כן' : 'לא' },
-        { label: 'פעיל', value: item.is_active ? 'כן' : 'לא' },
       ],
     }))
   }, [chatHistory, chatHistoryLoading])
@@ -918,6 +917,12 @@ export function LeadDetail() {
               קבצים
             </Tabs.Trigger>
             <Tabs.Trigger
+              value="banks"
+              className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
+            >
+              בנקים
+            </Tabs.Trigger>
+            <Tabs.Trigger
               value="simulator"
               className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
             >
@@ -962,44 +967,6 @@ export function LeadDetail() {
 
         <Tabs.Content value="files" className="mt-4 sm:mt-5">
           <div className="space-y-4 sm:space-y-6">
-            {/* 0) Bank visibility */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
-              <div className="flex flex-col gap-2 sm:flex-row-reverse sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">בנקים להצגה ללקוח</h2>
-                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">
-                    הסרת סימון מסתירה את הבנק מרשימת ההצעות של הלקוח.
-                  </p>
-                </div>
-                {bankVisibilitySaving && (
-                  <span className="text-xs text-[var(--color-text-muted)]">שומר...</span>
-                )}
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {BANK_VISIBILITY_OPTIONS.map((bank) => (
-                  <label
-                    key={bank.id}
-                    className="flex items-center justify-between rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] px-3 py-2"
-                  >
-                    <span className="text-sm font-medium text-[var(--color-text)]">{bank.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={allowedBankIds.includes(bank.id)}
-                      onChange={() => void toggleBankVisibility(bank.id)}
-                      disabled={bankVisibilityLoading || bankVisibilitySaving}
-                      className="h-4 w-4 rounded"
-                      aria-label={`הצגת ${bank.label}`}
-                    />
-                  </label>
-                ))}
-              </div>
-
-              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-                {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
-              </p>
-            </div>
-
             {/* 1) Uploaded files */}
             <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
@@ -1516,6 +1483,66 @@ export function LeadDetail() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="banks" className="mt-4 sm:mt-5">
+          <div className="space-y-4 sm:space-y-6">
+            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row-reverse sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">בנקים להצגה ללקוח</h2>
+                  <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">
+                    הסרת סימון מסתירה את הבנק מרשימת ההצעות של הלקוח.
+                  </p>
+                </div>
+                {bankVisibilitySaving && (
+                  <span className="text-xs text-[var(--color-text-muted)]">שומר...</span>
+                )}
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {BANK_VISIBILITY_OPTIONS.map((bank) => (
+                  <button
+                    key={bank.id}
+                    type="button"
+                    onClick={() => void toggleBankVisibility(bank.id)}
+                    disabled={bankVisibilityLoading || bankVisibilitySaving}
+                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-right transition-colors ${
+                      allowedBankIds.includes(bank.id)
+                        ? 'border-[var(--color-primary)] bg-white'
+                        : 'border-[var(--color-border-light)] bg-[var(--color-background)]'
+                    } disabled:cursor-not-allowed disabled:opacity-70`}
+                    aria-label={`הצגת ${bank.label}`}
+                    aria-pressed={allowedBankIds.includes(bank.id)}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <img
+                        src={bank.logoSrc}
+                        alt={bank.logoAlt}
+                        className="h-8 w-8 rounded-md border border-[var(--color-border-light)] bg-white p-1 object-contain"
+                        loading="lazy"
+                      />
+                      <span className="text-sm font-medium text-[var(--color-text)]">{bank.label}</span>
+                    </div>
+                    <span
+                      className={`inline-flex h-5 w-5 items-center justify-center rounded border ${
+                        allowedBankIds.includes(bank.id)
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
+                          : 'border-[var(--color-border)] bg-white text-transparent'
+                      }`}
+                      aria-hidden="true"
+                    >
+                      <Check size={13} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
+              </p>
             </div>
           </div>
         </Tabs.Content>
@@ -2112,6 +2139,7 @@ export function LeadDetail() {
                     { value: 'קבלת הכסף', label: 'קבלת הכסף' },
                     { value: 'מחזור - אין הצעה', label: 'מחזור - אין הצעה' },
                     { value: 'מחזור - יש הצעה', label: 'מחזור - יש הצעה' },
+                    { value: 'מחזור - נקבעה פגישה', label: 'מחזור - נקבעה פגישה' },
                     { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
                   ]}
                   buttonClassName="w-full justify-between bg-white"
@@ -2174,10 +2202,16 @@ export function LeadDetail() {
         confirmText="מחיקה"
         onConfirm={() => {
           if (deleteConfirm.id && deleteConfirm.type === 'bankResponse') {
-            updateUser(user.id, {
-              bankResponses: user.bankResponses.filter((x) => x.id !== deleteConfirm.id),
-            } as Partial<UserRecord>)
-            toast.success('נמחק')
+            deleteBankResponse(deleteConfirm.id)
+              .then(() => {
+                updateUser(user.id, {
+                  bankResponses: user.bankResponses.filter((x) => x.id !== deleteConfirm.id),
+                } as Partial<UserRecord>)
+                toast.success('נמחק')
+              })
+              .catch((error) => {
+                toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת תשובת בנק')
+              })
           } else if (deleteConfirm.id && deleteConfirm.type === 'simulatorOffer') {
             updateUser(user.id, {
               simulatorOffers: user.simulatorOffers.filter((x) => x.id !== deleteConfirm.id),

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Mail } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Mail, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { AnimatedIcon } from '@/components/ui/animated-icon'
@@ -17,9 +17,44 @@ const statusPill: Record<ContactSubmissionStatus, string> = {
   'טופל': 'bg-zinc-100 text-zinc-700',
 }
 
+const statusOptions: Array<{ value: ContactSubmissionStatus; label: string }> = [
+  { value: 'חדש', label: 'חדש' },
+  { value: 'בטיפול', label: 'בטיפול' },
+  { value: 'טופל', label: 'טופל' },
+]
+
 type StatusFilter = 'הכל' | ContactSubmissionStatus
 
-function DetailRow({ label, value, dir }: { label: string; value: React.ReactNode; dir?: 'rtl' | 'ltr' }) {
+type SubmissionFormState = {
+  fullName: string
+  phone: string
+  email: string
+  message: string
+  status: ContactSubmissionStatus
+  source: string
+}
+
+const emptyForm: SubmissionFormState = {
+  fullName: '',
+  phone: '',
+  email: '',
+  message: '',
+  status: 'חדש',
+  source: 'צור קשר באתר',
+}
+
+function toFormState(submission: ContactSubmission): SubmissionFormState {
+  return {
+    fullName: submission.fullName,
+    phone: submission.phone,
+    email: submission.email,
+    message: submission.message,
+    status: submission.status,
+    source: submission.source ?? 'צור קשר באתר',
+  }
+}
+
+function DetailRow({ label, value, dir }: { label: string; value: ReactNode; dir?: 'rtl' | 'ltr' }) {
   return (
     <div className="flex flex-row-reverse items-start justify-between gap-4 sm:gap-6 rounded-2xl bg-[var(--color-background)] p-3 sm:p-4">
       <div className="text-right">
@@ -32,12 +67,35 @@ function DetailRow({ label, value, dir }: { label: string; value: React.ReactNod
   )
 }
 
+function getFormError(form: SubmissionFormState): string | null {
+  if (!form.fullName.trim()) return 'יש להזין שם מלא'
+  if (!form.phone.trim()) return 'יש להזין טלפון'
+  if (!form.email.trim()) return 'יש להזין אימייל'
+  if (!form.message.trim()) return 'יש להזין תוכן פנייה'
+  return null
+}
+
 export function ContactSubmissions() {
-  const { submissions, counts, setStatus } = useContact()
+  const {
+    submissions,
+    counts,
+    loading,
+    addSubmission,
+    updateSubmission,
+    deleteSubmission,
+    setStatus,
+  } = useContact()
 
   const [query, setQuery] = useState('')
   const [status, setStatusFilter] = useState<StatusFilter>('הכל')
   const [active, setActive] = useState<ContactSubmission | null>(null)
+
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [formState, setFormState] = useState<SubmissionFormState>(emptyForm)
+  const [savingForm, setSavingForm] = useState(false)
+  const [savingStatus, setSavingStatus] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -61,17 +119,108 @@ export function ContactSubmissions() {
     return `${first}${second}`.toUpperCase()
   }
 
+  const openCreateForm = () => {
+    setEditingId(null)
+    setFormState(emptyForm)
+    setFormOpen(true)
+  }
+
+  const openEditForm = (submission: ContactSubmission) => {
+    setEditingId(submission.id)
+    setFormState(toFormState(submission))
+    setFormOpen(true)
+  }
+
+  const handleFormSubmit = async () => {
+    const validationError = getFormError(formState)
+    if (validationError) {
+      toast.error(validationError)
+      return
+    }
+
+    setSavingForm(true)
+    try {
+      if (editingId) {
+        const updated = await updateSubmission(editingId, {
+          fullName: formState.fullName,
+          phone: formState.phone,
+          email: formState.email,
+          message: formState.message,
+          status: formState.status,
+          source: formState.source,
+        })
+        if (active?.id === editingId) {
+          setActive(updated)
+        }
+        toast.success('הפנייה עודכנה')
+      } else {
+        await addSubmission({
+          fullName: formState.fullName,
+          phone: formState.phone,
+          email: formState.email,
+          message: formState.message,
+          status: formState.status,
+          source: formState.source,
+        })
+        toast.success('הפנייה נוספה')
+      }
+      setFormOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת הפנייה')
+    } finally {
+      setSavingForm(false)
+    }
+  }
+
+  const handleDelete = async (submission: ContactSubmission) => {
+    if (!window.confirm('למחוק את הפנייה?')) {
+      return
+    }
+
+    setDeletingId(submission.id)
+    try {
+      await deleteSubmission(submission.id)
+      if (active?.id === submission.id) {
+        setActive(null)
+      }
+      toast.success('הפנייה נמחקה')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת הפנייה')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const handleStatusSave = async () => {
+    if (!active) {
+      return
+    }
+
+    setSavingStatus(true)
+    try {
+      const updated = await setStatus(active.id, active.status)
+      setActive(updated)
+      toast.success('הסטטוס עודכן')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון סטטוס')
+    } finally {
+      setSavingStatus(false)
+    }
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6" dir="rtl">
-      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="text-right">
           <h1 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)]">פניות</h1>
           <p className="mt-1 text-sm sm:text-base text-[var(--color-text-muted)]">לידים שמגיעים מטופס "צור קשר" באתר</p>
         </div>
+        <Button variant="accent" onClick={openCreateForm}>
+          <Plus size={16} />
+          פנייה חדשה
+        </Button>
       </div>
 
-      {/* Metrics */}
       <div className="grid grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4">
         {[
           { label: 'סה״כ פניות', value: counts.total },
@@ -88,7 +237,6 @@ export function ContactSubmissions() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative w-full lg:max-w-md">
@@ -109,9 +257,7 @@ export function ContactSubmissions() {
               onChange={(v) => setStatusFilter(v as StatusFilter)}
               options={[
                 { value: 'הכל', label: 'כל הסטטוסים' },
-                { value: 'חדש', label: 'חדש' },
-                { value: 'בטיפול', label: 'בטיפול' },
-                { value: 'טופל', label: 'טופל' },
+                ...statusOptions,
               ]}
               buttonClassName="min-w-[160px] sm:min-w-[200px] justify-between bg-[var(--color-background)]"
               contentAlign="end"
@@ -121,98 +267,105 @@ export function ContactSubmissions() {
         </div>
       </div>
 
-      {/* Mobile Card View */}
-      <div className="block md:hidden space-y-3">
-        {filtered.map((s) => (
-          <div
-            key={s.id}
-            className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => setActive(s)}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-semibold text-[var(--color-text)] truncate">{s.fullName}</p>
-                <p className="mt-1 text-sm text-[var(--color-text-muted)]" dir="ltr">{s.phone}</p>
-                <p className="text-sm text-[var(--color-text-muted)] truncate" dir="ltr">{s.email}</p>
-              </div>
-              <div className="flex flex-col items-end gap-2 shrink-0">
-                <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill[s.status]}`}>
-                  {s.status}
-                </span>
-                <span className="text-xs text-[var(--color-text-muted)]">{formatShortDate(s.createdAt)}</span>
-              </div>
-            </div>
-            <p className="mt-3 text-sm text-[var(--color-text-muted)] line-clamp-2">{s.message}</p>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div className="rounded-2xl border border-[var(--color-border)] bg-white p-8 text-center text-[var(--color-text-muted)]">
-            לא נמצאו פניות לפי הפילטרים
-          </div>
-        )}
-      </div>
-
-      {/* Desktop Table */}
-      <div className="hidden md:block rounded-2xl border border-[var(--color-border-light)] bg-white shadow-[var(--shadow-card)]">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" dir="rtl">
-            <thead>
-              <tr className="border-t border-[var(--color-border-light)] text-[var(--color-text-muted)]">
-                <th className="px-6 py-3 text-right font-medium">שם מלא</th>
-                <th className="px-6 py-3 text-right font-medium">טלפון</th>
-                <th className="px-6 py-3 text-right font-medium">אימייל</th>
-                <th className="px-6 py-3 text-right font-medium">תוכן הפניה</th>
-                <th className="px-6 py-3 text-right font-medium">סטטוס</th>
-                <th className="px-6 py-3 text-right font-medium">תאריך</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((s) => (
-                <tr
-                  key={s.id}
-                  className="cursor-pointer border-t border-[var(--color-border-light)] hover:bg-[var(--color-background)]"
-                  onClick={() => setActive(s)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') setActive(s)
-                  }}
-                  tabIndex={0}
-                >
-                  <td className="px-6 py-4 text-right font-medium text-[var(--color-text)]">{s.fullName}</td>
-                  <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
-                    <span dir="ltr" className="inline-block tabular-nums">{s.phone}</span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
-                    <span dir="ltr" className="inline-block">{s.email}</span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
-                    <span className="block max-w-[520px] truncate">{s.message}</span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill[s.status]}`}>
-                      {s.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-[var(--color-text-muted)] whitespace-nowrap">{formatShortDate(s.createdAt)}</td>
-                </tr>
-              ))}
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-[var(--color-text-muted)]">
-                    לא נמצאו פניות לפי הפילטרים
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+      {loading ? (
+        <div className="rounded-2xl border border-[var(--color-border)] bg-white p-8 text-center text-[var(--color-text-muted)]">
+          טוען פניות...
         </div>
-      </div>
+      ) : null}
 
-      {/* Details modal */}
+      {!loading ? (
+        <div className="block md:hidden space-y-3">
+          {filtered.map((s) => (
+            <div
+              key={s.id}
+              className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+              onClick={() => setActive(s)}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-[var(--color-text)] truncate">{s.fullName}</p>
+                  <p className="mt-1 text-sm text-[var(--color-text-muted)]" dir="ltr">{s.phone}</p>
+                  <p className="text-sm text-[var(--color-text-muted)] truncate" dir="ltr">{s.email}</p>
+                </div>
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill[s.status]}`}>
+                    {s.status}
+                  </span>
+                  <span className="text-xs text-[var(--color-text-muted)]">{formatShortDate(s.createdAt)}</span>
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-[var(--color-text-muted)] line-clamp-2">{s.message}</p>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-white p-8 text-center text-[var(--color-text-muted)]">
+              לא נמצאו פניות לפי הפילטרים
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {!loading ? (
+        <div className="hidden md:block rounded-2xl border border-[var(--color-border-light)] bg-white shadow-[var(--shadow-card)]">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" dir="rtl">
+              <thead>
+                <tr className="border-t border-[var(--color-border-light)] text-[var(--color-text-muted)]">
+                  <th className="px-6 py-3 text-right font-medium">שם מלא</th>
+                  <th className="px-6 py-3 text-right font-medium">טלפון</th>
+                  <th className="px-6 py-3 text-right font-medium">אימייל</th>
+                  <th className="px-6 py-3 text-right font-medium">תוכן הפניה</th>
+                  <th className="px-6 py-3 text-right font-medium">סטטוס</th>
+                  <th className="px-6 py-3 text-right font-medium">תאריך</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr
+                    key={s.id}
+                    className="cursor-pointer border-t border-[var(--color-border-light)] hover:bg-[var(--color-background)]"
+                    onClick={() => setActive(s)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setActive(s)
+                    }}
+                    tabIndex={0}
+                  >
+                    <td className="px-6 py-4 text-right font-medium text-[var(--color-text)]">{s.fullName}</td>
+                    <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
+                      <span dir="ltr" className="inline-block tabular-nums">{s.phone}</span>
+                    </td>
+                    <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
+                      <span dir="ltr" className="inline-block">{s.email}</span>
+                    </td>
+                    <td className="px-6 py-4 text-right text-[var(--color-text-muted)]">
+                      <span className="block max-w-[520px] truncate">{s.message}</span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill[s.status]}`}>
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right text-[var(--color-text-muted)] whitespace-nowrap">{formatShortDate(s.createdAt)}</td>
+                  </tr>
+                ))}
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-10 text-center text-[var(--color-text-muted)]">
+                      לא נמצאו פניות לפי הפילטרים
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>פרטי פנייה</DialogTitle>
-            <DialogDescription>לחצו על "שמור" אם שיניתם סטטוס.</DialogDescription>
+            <DialogDescription>אפשר לשנות סטטוס, לערוך או למחוק.</DialogDescription>
           </DialogHeader>
 
           {active ? (
@@ -238,22 +391,12 @@ export function ContactSubmissions() {
                     onChange={(v) => {
                       setActive((prev) => (prev ? { ...prev, status: v } : prev))
                     }}
-                    options={[
-                      { value: 'חדש', label: 'חדש' },
-                      { value: 'בטיפול', label: 'בטיפול' },
-                      { value: 'טופל', label: 'טופל' },
-                    ]}
+                    options={statusOptions}
                     buttonClassName="min-w-[120px] sm:min-w-[160px] justify-between bg-[var(--color-background)]"
                     contentAlign="end"
                   />
-                  <Button
-                    variant="accent"
-                    onClick={() => {
-                      setStatus(active.id, active.status)
-                      toast.success('הסטטוס עודכן')
-                    }}
-                  >
-                    שמור
+                  <Button variant="accent" onClick={handleStatusSave} disabled={savingStatus}>
+                    {savingStatus ? 'שומר...' : 'שמור'}
                   </Button>
                 </div>
               </div>
@@ -271,11 +414,69 @@ export function ContactSubmissions() {
                 </p>
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={() => openEditForm(active)}>עריכה</Button>
+                <Button variant="danger" onClick={() => handleDelete(active)} disabled={deletingId === active.id}>
+                  {deletingId === active.id ? 'מוחק...' : 'מחיקה'}
+                </Button>
                 <Button variant="outline" onClick={() => setActive(null)}>סגור</Button>
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingId ? 'עריכת פנייה' : 'פנייה חדשה'}</DialogTitle>
+            <DialogDescription>ניהול פנייה ידני ממסך האדמין.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <Input
+              value={formState.fullName}
+              onChange={(e) => setFormState((prev) => ({ ...prev, fullName: e.target.value }))}
+              placeholder="שם מלא"
+            />
+            <Input
+              value={formState.phone}
+              onChange={(e) => setFormState((prev) => ({ ...prev, phone: e.target.value }))}
+              placeholder="טלפון"
+              dir="ltr"
+            />
+            <Input
+              value={formState.email}
+              onChange={(e) => setFormState((prev) => ({ ...prev, email: e.target.value }))}
+              placeholder="אימייל"
+              dir="ltr"
+            />
+            <Input
+              value={formState.source}
+              onChange={(e) => setFormState((prev) => ({ ...prev, source: e.target.value }))}
+              placeholder="מקור הפנייה"
+            />
+            <DropdownSelect<ContactSubmissionStatus>
+              value={formState.status}
+              onChange={(v) => setFormState((prev) => ({ ...prev, status: v }))}
+              options={statusOptions}
+              buttonClassName="w-full justify-between bg-[var(--color-background)]"
+              contentAlign="end"
+            />
+            <textarea
+              value={formState.message}
+              onChange={(e) => setFormState((prev) => ({ ...prev, message: e.target.value }))}
+              className="min-h-[140px] w-full rounded-2xl border border-[var(--color-border)] bg-white p-4 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-light)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              placeholder="תוכן הפנייה"
+            />
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setFormOpen(false)} disabled={savingForm}>ביטול</Button>
+            <Button variant="accent" onClick={handleFormSubmit} disabled={savingForm}>
+              {savingForm ? 'שומר...' : 'שמור'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -138,3 +138,17 @@ export async function downloadBankResponseFile(responseId: string): Promise<{ bl
   const filename = getFilenameFromHeader(response.headers.get('content-disposition'), 'file')
   return { blob, filename }
 }
+
+export async function deleteBankResponse(responseId: string): Promise<void> {
+  const response = await fetch(`${AUTH_BASE}/bank-responses/${responseId}`, {
+    method: 'DELETE',
+    headers: {
+      ...getAuthHeader(),
+    },
+  })
+
+  if (!response.ok) {
+    const payload = await parseJson<{ detail?: string }>(response)
+    throw new Error(getErrorMessage(payload, 'Request failed'))
+  }
+}

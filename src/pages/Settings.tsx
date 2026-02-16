@@ -32,6 +32,7 @@ const leadStatusOptions: { value: LeadStatus; label: string }[] = [
   { value: 'קבלת הכסף', label: 'קבלת הכסף' },
   { value: 'מחזור - אין הצעה', label: 'מחזור - אין הצעה' },
   { value: 'מחזור - יש הצעה', label: 'מחזור - יש הצעה' },
+  { value: 'מחזור - נקבעה פגישה', label: 'מחזור - נקבעה פגישה' },
   { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
 ]
 

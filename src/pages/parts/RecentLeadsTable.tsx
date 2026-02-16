@@ -18,6 +18,7 @@ const statusStyles: Record<LeadStatus, string> = {
   'קבלת הכסף': 'bg-green-100 text-green-700',
   'מחזור - אין הצעה': 'bg-red-100 text-red-700',
   'מחזור - יש הצעה': 'bg-teal-100 text-teal-700',
+  'מחזור - נקבעה פגישה': 'bg-cyan-100 text-cyan-700',
   'מחזור - ניטור': 'bg-gray-100 text-gray-700',
 }
 

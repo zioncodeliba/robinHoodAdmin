@@ -11,6 +11,7 @@ import {
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { getCurrentAdminProfile } from '@/lib/admin-profile'
 import { clearAuth } from '@/lib/auth-storage'
+import { useContact } from '@/lib/contact-store'
 import { cn } from '@/lib/utils'
 
 interface NavItemConfig {
@@ -25,7 +26,7 @@ const navItems: NavItemConfig[] = [
   { to: '/users', label: 'לקוחות', icon: Users },
   { to: '/meetings', label: 'פגישות', icon: Calendar },
   { to: '/affiliates', label: 'שותפים עסקיים', icon: Handshake },
-  { to: '/contact', label: 'פניות', icon: Mail, badge: 3 },
+  { to: '/contact', label: 'פניות', icon: Mail },
 ]
 
 interface SideNavItemProps extends NavItemConfig {
@@ -52,7 +53,7 @@ function SideNavItem({ to, label, icon: Icon, badge, onNavClick }: SideNavItemPr
         </span>
         <span className="min-w-0 truncate">{label}</span>
       </div>
-      {badge ? (
+      {typeof badge === 'number' && badge > 0 ? (
         <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[var(--color-accent)] px-1.5 text-xs font-semibold text-white">
           {badge}
         </span>
@@ -68,6 +69,7 @@ interface SidebarProps {
 
 export function Sidebar({ onNavClick, className }: SidebarProps) {
   const currentAdmin = getCurrentAdminProfile()
+  const { counts } = useContact()
   return (
     <aside
       className={cn(
@@ -91,7 +93,12 @@ export function Sidebar({ onNavClick, className }: SidebarProps) {
         </p>
         <div className="space-y-1">
           {navItems.map((item) => (
-            <SideNavItem key={item.to} {...item} onNavClick={onNavClick} />
+            <SideNavItem
+              key={item.to}
+              {...item}
+              badge={item.to === '/contact' ? counts.new : item.badge}
+              onNavClick={onNavClick}
+            />
           ))}
         </div>
       </nav>

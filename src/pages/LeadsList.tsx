@@ -27,6 +27,7 @@ const statusStyles: Record<LeadStatus, string> = {
   'קבלת הכסף': 'bg-green-100 text-green-700',
   'מחזור - אין הצעה': 'bg-red-100 text-red-700',
   'מחזור - יש הצעה': 'bg-teal-100 text-teal-700',
+  'מחזור - נקבעה פגישה': 'bg-cyan-100 text-cyan-700',
   'מחזור - ניטור': 'bg-gray-100 text-gray-700',
 }
 
@@ -231,6 +232,7 @@ export function LeadsList() {
                   { value: 'קבלת הכסף', label: 'קבלת הכסף' },
                   { value: 'מחזור - אין הצעה', label: 'מחזור - אין הצעה' },
                   { value: 'מחזור - יש הצעה', label: 'מחזור - יש הצעה' },
+                  { value: 'מחזור - נקבעה פגישה', label: 'מחזור - נקבעה פגישה' },
                   { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
                 ]}
                 buttonClassName="border-0 bg-transparent px-2 py-1.5 hover:bg-transparent"
@@ -540,6 +542,7 @@ export function LeadsList() {
                         { value: 'קבלת הכסף', label: 'קבלת הכסף' },
                         { value: 'מחזור - אין הצעה', label: 'מחזור - אין הצעה' },
                         { value: 'מחזור - יש הצעה', label: 'מחזור - יש הצעה' },
+                        { value: 'מחזור - נקבעה פגישה', label: 'מחזור - נקבעה פגישה' },
                         { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
                       ]}
                       buttonClassName="w-full justify-between bg-white"

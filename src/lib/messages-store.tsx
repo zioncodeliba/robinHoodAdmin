@@ -28,7 +28,7 @@ const initialTemplates: MessageTemplate[] = [
   {
     id: 'tpl-2',
     name: 'זימון לשיחת תמהיל',
-    trigger: 'שיחת תגכהמהיל',
+    trigger: 'שיחת תמהיל',
     message: 'שלום {שם}, אנחנו מזמינים אותך לשיחת תמהיל לקביעת פרטי המשכנתא. אנא צור קשר לתיאום מועד.',
     createdAt: '2025-01-02',
   },
@@ -85,4 +85,3 @@ export function useMessages() {
   if (!ctx) throw new Error('useMessages must be used within a MessagesProvider')
   return ctx
 }
-
