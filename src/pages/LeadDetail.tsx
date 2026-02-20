@@ -73,16 +73,31 @@ const BANK_VISIBILITY_OPTIONS: Array<{
   logoSrc: string
   logoAlt: string
 }> = [
-  { id: 3, label: 'הפועלים', logoSrc: '/banks/hapoalim.svg', logoAlt: 'לוגו בנק הפועלים' },
-  { id: 2, label: 'לאומי', logoSrc: '/banks/leumi.svg', logoAlt: 'לוגו בנק לאומי' },
-  { id: 1, label: 'מזרחי-טפחות', logoSrc: '/banks/mizrahi.svg', logoAlt: 'לוגו בנק מזרחי-טפחות' },
-  { id: 4, label: 'דיסקונט', logoSrc: '/banks/discount.svg', logoAlt: 'לוגו בנק דיסקונט' },
-  { id: 8, label: 'הבינלאומי', logoSrc: '/banks/international-logo.png', logoAlt: 'לוגו הבנק הבינלאומי' },
-  { id: 12, label: 'מרכנתיל', logoSrc: '/banks/mercantile.svg', logoAlt: 'לוגו בנק מרכנתיל' },
+  { id: 3, label: 'הפועלים', logoSrc: '/banks/hapoalim.png', logoAlt: 'לוגו בנק הפועלים' },
+  { id: 2, label: 'לאומי', logoSrc: '/banks/leumi.png', logoAlt: 'לוגו בנק לאומי' },
+  { id: 1, label: 'מזרחי-טפחות', logoSrc: '/banks/mizrahi.png', logoAlt: 'לוגו בנק מזרחי-טפחות' },
+  { id: 4, label: 'דיסקונט', logoSrc: '/banks/discount.png', logoAlt: 'לוגו בנק דיסקונט' },
+  { id: 8, label: 'הבינלאומי', logoSrc: '/banks/international.png', logoAlt: 'לוגו הבנק הבינלאומי' },
+  { id: 12, label: 'מרכנתיל', logoSrc: '/banks/mercantile.png', logoAlt: 'לוגו בנק מרכנתיל' },
 ]
+const SELECTED_OFFER_CHOICE = 'selected_offer'
+const DISPLAY_CHOICE_STORAGE_PREFIX = 'admin:selected-display-choice:'
 
 const normalizeAllowedBankIds = (ids: number[]) =>
   BANK_VISIBILITY_ORDER.filter((id) => ids.includes(id))
+
+const parseDisplayChoice = (raw: string | null): number | typeof SELECTED_OFFER_CHOICE | null => {
+  if (!raw) return null
+  if (raw === SELECTED_OFFER_CHOICE) return SELECTED_OFFER_CHOICE
+  const value = Number(raw)
+  if (Number.isInteger(value) && BANK_VISIBILITY_ORDER.includes(value)) {
+    return value
+  }
+  return null
+}
+
+const getDefaultAllowedBankIdsForMortgageType = (mortgageType?: MortgageType): number[] =>
+  mortgageType === 'משכנתא חדשה' ? [...BANK_VISIBILITY_ORDER] : []
 
 
 const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
@@ -220,14 +235,30 @@ export function LeadDetail() {
   const [bankResponsesLoading, setBankResponsesLoading] = useState(false)
   const [systemFiles, setSystemFiles] = useState<{ id: string; originalName: string; uploadedAt: string }[]>([])
   const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
-  const [allowedBankIds, setAllowedBankIds] = useState<number[]>(BANK_VISIBILITY_ORDER)
+  const [allowedBankIds, setAllowedBankIds] = useState<number[]>(() =>
+    getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
+  )
   const [bankVisibilityLoading, setBankVisibilityLoading] = useState(false)
   const [bankVisibilitySaving, setBankVisibilitySaving] = useState(false)
+  const [selectedDisplayChoice, setSelectedDisplayChoice] = useState<number | typeof SELECTED_OFFER_CHOICE | null>(null)
+  const [questionnairePage, setQuestionnairePage] = useState(1)
+  const [questionnairePageSize, setQuestionnairePageSize] = useState(10)
 
   const selectedTemplate = useMemo(() => 
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
     [templates, selectedTemplateId]
   )
+  const displayChoiceStorageKey = useMemo(
+    () => (user ? `${DISPLAY_CHOICE_STORAGE_PREFIX}${user.id}` : ''),
+    [user?.id]
+  )
+  const selectedDisplayChoiceLabel = useMemo(() => {
+    if (selectedDisplayChoice === SELECTED_OFFER_CHOICE) return 'הצעה נבחרת'
+    if (typeof selectedDisplayChoice === 'number') {
+      return BANK_VISIBILITY_OPTIONS.find((item) => item.id === selectedDisplayChoice)?.label ?? 'לא נבחר'
+    }
+    return 'לא נבחר'
+  }, [selectedDisplayChoice])
 
   const monthly = useMemo(() => calcMonthlyPayment(loanAmount, rate, loanYears), [loanAmount, rate, loanYears])
   const totalPaid = useMemo(() => monthly * loanYears * 12, [monthly, loanYears])
@@ -266,7 +297,7 @@ export function LeadDetail() {
       })
       .catch(() => {
         if (!isMounted) return
-        setAllowedBankIds(BANK_VISIBILITY_ORDER)
+        setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
       })
       .finally(() => {
         if (isMounted) setBankVisibilityLoading(false)
@@ -274,7 +305,26 @@ export function LeadDetail() {
     return () => {
       isMounted = false
     }
-  }, [user?.id])
+  }, [user?.id, user?.mortgageType])
+
+  useEffect(() => {
+    setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
+  }, [user?.id, user?.mortgageType])
+
+  useEffect(() => {
+    if (!displayChoiceStorageKey) {
+      setSelectedDisplayChoice(null)
+      return
+    }
+    const raw = localStorage.getItem(displayChoiceStorageKey)
+    setSelectedDisplayChoice(parseDisplayChoice(raw))
+  }, [displayChoiceStorageKey])
+
+  useEffect(() => {
+    if (typeof selectedDisplayChoice !== 'number') return
+    if (allowedBankIds.includes(selectedDisplayChoice)) return
+    handleDisplayChoice(null)
+  }, [allowedBankIds, selectedDisplayChoice])
 
   useEffect(() => {
     if (!user) return
@@ -379,11 +429,28 @@ export function LeadDetail() {
     }
   }, [user?.id, updateUser])
 
+  const persistDisplayChoice = (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
+    if (!displayChoiceStorageKey) return
+    if (choice === null) {
+      localStorage.removeItem(displayChoiceStorageKey)
+      return
+    }
+    localStorage.setItem(displayChoiceStorageKey, String(choice))
+  }
+
+  const handleDisplayChoice = (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
+    setSelectedDisplayChoice(choice)
+    persistDisplayChoice(choice)
+  }
+
   const toggleBankVisibility = async (bankId: number) => {
     if (!user || bankVisibilitySaving) return
     const prev = allowedBankIds
     const next = prev.includes(bankId) ? prev.filter((id) => id !== bankId) : [...prev, bankId]
     const ordered = normalizeAllowedBankIds(next)
+    if (typeof selectedDisplayChoice === 'number' && !ordered.includes(selectedDisplayChoice)) {
+      handleDisplayChoice(null)
+    }
     setAllowedBankIds(ordered)
     setBankVisibilitySaving(true)
     try {
@@ -568,38 +635,39 @@ export function LeadDetail() {
     return { sessionId: latest.session_id, timestamp: latest.timestamp }
   }, [chatHistory])
 
-  const chatSections = useMemo(() => {
-    if (chatHistoryLoading) {
-      return [
-        {
-          title: 'שיחות צ׳אט',
-          fields: [{ label: 'סטטוס', value: 'טוען היסטוריית שיחה...' }],
-        },
-      ]
-    }
-    if (chatHistory.length === 0) {
-      return [
-        {
-          title: 'שיחות צ׳אט',
-          fields: [{ label: 'סטטוס', value: 'אין היסטוריית שיחה זמינה' }],
-        },
-      ]
-    }
-
-    return chatHistory.map((item, index) => ({
-      title: `שאלה ${index + 1}`,
-      fields: [
-        { label: 'שאלה', value: formatHistoryValue(item.block_message) },
-        { label: 'תשובה', value: formatHistoryValue(item.user_input ?? item.option_label) },
-        { label: 'זמן', value: formatHistoryValue(formatHistoryTimestamp(item.timestamp)) },
-      ],
-    }))
-  }, [chatHistory, chatHistoryLoading])
-
-  const questionnaireSections = useMemo(
-    () => [...(user?.questionnaire ?? []), ...chatSections],
-    [user, chatSections]
+  const questionnaireRows = useMemo(
+    () =>
+      [...chatHistory]
+        .sort((a, b) => {
+          const aTs = new Date(a.timestamp).getTime()
+          const bTs = new Date(b.timestamp).getTime()
+          return (Number.isNaN(aTs) ? 0 : aTs) - (Number.isNaN(bTs) ? 0 : bTs)
+        })
+        .map((item, index) => ({
+          id: item.id || `${item.session_id}-${index}`,
+          questionNumber: index + 1,
+          question: formatHistoryValue(item.block_message),
+          answer: formatHistoryValue(item.user_input ?? item.option_label),
+          time: formatHistoryValue(formatHistoryTimestamp(item.timestamp)),
+        })),
+    [chatHistory]
   )
+  const questionnaireTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(questionnaireRows.length / questionnairePageSize)),
+    [questionnaireRows.length, questionnairePageSize]
+  )
+  const questionnairePagedRows = useMemo(() => {
+    const start = (questionnairePage - 1) * questionnairePageSize
+    return questionnaireRows.slice(start, start + questionnairePageSize)
+  }, [questionnaireRows, questionnairePage, questionnairePageSize])
+
+  useEffect(() => {
+    setQuestionnairePage(1)
+  }, [questionnairePageSize, questionnaireRows.length])
+
+  useEffect(() => {
+    setQuestionnairePage((prev) => Math.min(prev, questionnaireTotalPages))
+  }, [questionnaireTotalPages])
 
   if (!user) {
     return (
@@ -911,16 +979,16 @@ export function LeadDetail() {
               שאלון
             </Tabs.Trigger>
             <Tabs.Trigger
-              value="files"
-              className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
-            >
-              קבצים
-            </Tabs.Trigger>
-            <Tabs.Trigger
               value="banks"
               className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
             >
               בנקים
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="files"
+              className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
+            >
+              קבצים
             </Tabs.Trigger>
             <Tabs.Trigger
               value="simulator"
@@ -942,36 +1010,104 @@ export function LeadDetail() {
             <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">שאלון</h2>
             <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">תצוגה לקריאה בלבד.</p>
 
-            <div className="mt-4 sm:mt-5 grid grid-cols-1 gap-3 sm:gap-5 lg:grid-cols-2">
-              {questionnaireSections.map((section) => (
-                <div
-                  key={section.title}
-                  className="rounded-2xl sm:rounded-3xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-5"
-                >
-                  <h3 className="text-sm font-bold text-[var(--color-text)]">{section.title}</h3>
-                  <div className="mt-3 sm:mt-4 space-y-2 sm:space-y-3">
-                    {section.fields.map((f) => (
-                      <div key={f.label} className="flex flex-row-reverse items-start justify-between gap-3 sm:gap-6">
-                        <span className="text-xs sm:text-sm text-[var(--color-text-muted)] text-right">{f.label}</span>
-                        <span className="text-xs sm:text-sm font-semibold text-[var(--color-text)] text-left" dir="rtl">
-                          {f.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+            <div className="mt-4 sm:mt-5 rounded-2xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4">
+              {chatHistoryLoading ? (
+                <div className="rounded-xl border border-[var(--color-border-light)] bg-white p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  טוען היסטוריית שיחה...
                 </div>
-              ))}
+              ) : questionnaireRows.length === 0 ? (
+                <div className="rounded-xl border border-[var(--color-border-light)] bg-white p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  אין היסטוריית שיחה זמינה.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
+                    <table className="w-full text-sm" dir="rtl">
+                      <thead>
+                        <tr className="bg-white text-[var(--color-text-muted)]">
+                          <th className="px-4 py-3 text-right font-medium">מספר שאלה</th>
+                          <th className="px-4 py-3 text-right font-medium">שאלה</th>
+                          <th className="px-4 py-3 text-right font-medium">תשובה</th>
+                          <th className="px-4 py-3 text-right font-medium">זמן</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {questionnairePagedRows.map((row) => (
+                          <tr key={row.id} className="border-t border-[var(--color-border-light)] bg-white align-top">
+                            <td className="px-4 py-3 text-xs sm:text-sm font-medium text-[var(--color-text)]">{row.questionNumber}</td>
+                            <td className="px-4 py-3 text-xs sm:text-sm text-[var(--color-text)] whitespace-pre-wrap break-words">
+                              {row.question}
+                            </td>
+                            <td className="px-4 py-3 text-xs sm:text-sm text-[var(--color-text)] whitespace-pre-wrap break-words">
+                              {row.answer}
+                            </td>
+                            <td className="px-4 py-3 text-xs sm:text-sm text-[var(--color-text-muted)] whitespace-nowrap">
+                              {row.time}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 text-xs sm:text-sm text-[var(--color-text-muted)]">
+                      <span>שורות לדף:</span>
+                      <DropdownSelect<string>
+                        value={String(questionnairePageSize)}
+                        onChange={(v) => setQuestionnairePageSize(Number(v))}
+                        options={[
+                          { value: '5', label: '5' },
+                          { value: '10', label: '10' },
+                          { value: '20', label: '20' },
+                          { value: '50', label: '50' },
+                        ]}
+                        buttonClassName="w-20 justify-between bg-white"
+                        contentAlign="end"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 sm:gap-6">
+                      <span className="text-xs sm:text-sm text-[var(--color-text-muted)]">
+                        {(questionnairePage - 1) * questionnairePageSize + 1}–
+                        {Math.min(questionnairePage * questionnairePageSize, questionnaireRows.length)} מתוך {questionnaireRows.length}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setQuestionnairePage((p) => Math.max(1, p - 1))}
+                          disabled={questionnairePage === 1}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="הקודם"
+                        >
+                          <ArrowRight size={16} />
+                        </button>
+                        <span className="px-2 text-sm font-medium text-[var(--color-text)]">
+                          {questionnairePage} / {questionnaireTotalPages}
+                        </span>
+                        <button
+                          onClick={() => setQuestionnairePage((p) => Math.min(questionnaireTotalPages, p + 1))}
+                          disabled={questionnairePage >= questionnaireTotalPages}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="הבא"
+                        >
+                          <ArrowRight size={16} className="rotate-180" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </Tabs.Content>
 
         <Tabs.Content value="files" className="mt-4 sm:mt-5">
-          <div className="space-y-4 sm:space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-2">
             {/* 1) Uploaded files */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+            <div className="order-2 h-full rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצים שהלקוח העלה</h2>
+                  <h2 className="text-sm sm:text-base font-bold text-[var(--color-text)]">קבצים שהלקוח העלה</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">תצוגה + הורדה.</p>
                 </div>
                 <Button
@@ -1039,51 +1175,51 @@ export function LeadDetail() {
               {/* Desktop Table View */}
               <div className="mt-4 hidden sm:block">
                 {customerFilesLoading ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-xs text-[var(--color-text-muted)]">
                     טוען קבצים...
                   </div>
                 ) : user.uploadedFiles.length === 0 ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-xs text-[var(--color-text-muted)]">
                     עדיין לא הועלו קבצים.
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
-                    <table className="w-full text-sm" dir="rtl">
+                    <table className="w-full text-xs" dir="rtl">
                       <thead>
                         <tr className="bg-[var(--color-background)] text-[var(--color-text-muted)]">
-                          <th className="px-4 py-3 text-right font-medium">שם קובץ</th>
-                          <th className="px-4 py-3 text-right font-medium">שם מקורי</th>
-                          <th className="px-4 py-3 text-right font-medium">הועלה ע״י</th>
-                          <th className="px-4 py-3 text-right font-medium">תאריך העלאה</th>
-                          <th className="px-4 py-3 text-center font-medium">צפייה</th>
-                          <th className="px-4 py-3 text-center font-medium">הורדה</th>
+                          <th className="px-3 py-2 text-right font-medium">שם קובץ</th>
+                          <th className="px-3 py-2 text-right font-medium">שם מקורי</th>
+                          <th className="px-3 py-2 text-right font-medium">הועלה ע״י</th>
+                          <th className="px-3 py-2 text-right font-medium">תאריך העלאה</th>
+                          <th className="px-3 py-2 text-center font-medium">צפייה</th>
+                          <th className="px-3 py-2 text-center font-medium">הורדה</th>
                         </tr>
                       </thead>
                       <tbody>
                         {user.uploadedFiles.map((f) => (
                           <tr key={f.id} className="border-t border-[var(--color-border-light)] bg-white">
-                            <td className="px-4 py-3 font-medium text-[var(--color-text)]">{f.customName || '—'}</td>
-                            <td className="px-4 py-3 text-[var(--color-text-muted)]" dir="ltr">{f.originalName}</td>
-                            <td className="px-4 py-3 text-[var(--color-text)]">{f.uploadedBy}</td>
-                            <td className="px-4 py-3 text-[var(--color-text-muted)]">{f.uploadedAt}</td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 font-medium text-[var(--color-text)]">{f.customName || '—'}</td>
+                            <td className="px-3 py-2 text-[var(--color-text-muted)]" dir="ltr">{f.originalName}</td>
+                            <td className="px-3 py-2 text-[var(--color-text)]">{f.uploadedBy}</td>
+                            <td className="px-3 py-2 text-[var(--color-text-muted)]">{f.uploadedAt}</td>
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => void handleCustomerFileView(f)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="צפייה"
                                 title="צפייה"
                               >
-                                <Eye size={16} />
+                                <Eye size={14} />
                               </button>
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => void handleCustomerFileDownload(f)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="הורדה"
                                 title="הורדה"
                               >
-                                <Download size={16} />
+                                <Download size={14} />
                               </button>
                             </td>
                           </tr>
@@ -1096,10 +1232,10 @@ export function LeadDetail() {
             </div>
 
             {/* 2) Signature docs */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+            <div className="order-3 h-full rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4 shadow-sm">
               <div className="flex flex-row-reverse items-center justify-between">
                 <div className="text-right">
-                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצים לחתימה</h2>
+                  <h2 className="text-sm sm:text-base font-bold text-[var(--color-text)]">קבצים לחתימה</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">סטטוס חתימה + שליחה חוזרת.</p>
                 </div>
               </div>
@@ -1167,24 +1303,24 @@ export function LeadDetail() {
               {/* Desktop Table View */}
               <div className="mt-4 hidden sm:block">
                 {user.signatureDocs.length === 0 ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-xs text-[var(--color-text-muted)]">
                     אין מסמכים לחתימה כרגע.
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
-                    <table className="w-full text-sm" dir="rtl">
+                    <table className="w-full text-xs" dir="rtl">
                       <thead>
                         <tr className="bg-[var(--color-background)] text-[var(--color-text-muted)]">
-                          <th className="px-4 py-3 text-right font-medium">מסמך</th>
-                          <th className="px-4 py-3 text-right font-medium">סטטוס</th>
-                          <th className="px-4 py-3 text-center font-medium">צפייה</th>
-                          <th className="px-4 py-3 text-center font-medium">הורדה</th>
+                          <th className="px-3 py-2 text-right font-medium">מסמך</th>
+                          <th className="px-3 py-2 text-right font-medium">סטטוס</th>
+                          <th className="px-3 py-2 text-center font-medium">צפייה</th>
+                          <th className="px-3 py-2 text-center font-medium">הורדה</th>
                         </tr>
                       </thead>
                       <tbody>
                         {user.signatureDocs.map((d) => (
                           <tr key={d.id} className="border-t border-[var(--color-border-light)] bg-white">
-                            <td className="px-4 py-3 font-medium text-[var(--color-text)] text-right">
+                            <td className="px-3 py-2 font-medium text-[var(--color-text)] text-right">
                               <div className="flex w-full flex-row-reverse items-center justify-end gap-2">
                                 {d.status === 'נחתם' ? (
                                   <CheckCircle2 className="h-5 w-5 text-[var(--color-success)]" />
@@ -1194,7 +1330,7 @@ export function LeadDetail() {
                                 <span>{d.name}</span>
                               </div>
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="px-3 py-2">
                               <DropdownSelect<SignatureDocStatus>
                                 value={d.status}
                                 onChange={(v) => {
@@ -1212,26 +1348,26 @@ export function LeadDetail() {
                                 contentAlign="end"
                               />
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => {
                                   void handleSystemFileView(d.id)
                                 }}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="צפייה במסמך"
                                 title="צפייה"
                               >
-                                <Eye size={16} />
+                                <Eye size={14} />
                               </button>
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => void handleSystemFileDownload(d.id, d.fileName || d.name)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)]"
                                 aria-label="הורדת מסמך"
                                 title="הורדה"
                               >
-                                <Download size={16} />
+                                <Download size={14} />
                               </button>
                             </td>
                           </tr>
@@ -1244,10 +1380,10 @@ export function LeadDetail() {
             </div>
 
             {/* 3) Bank files */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+            <div className="order-1 h-full rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-end sm:justify-between">
                 <div>
-                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצי בנק</h2>
+                  <h2 className="text-sm sm:text-base font-bold text-[var(--color-text)]">קבצי בנק</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">העלאה, צפייה בנתונים שחולצו ומחיקה.</p>
                 </div>
 
@@ -1326,65 +1462,65 @@ export function LeadDetail() {
               {/* Desktop Table View */}
               <div className="mt-4 hidden sm:block">
                 {bankResponsesLoading ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-xs text-[var(--color-text-muted)]">
                     טוען קבצי בנק...
                   </div>
                 ) : user.bankResponses.length === 0 ? (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-xs text-[var(--color-text-muted)]">
                     אין קבצי בנק עדיין.
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
-                    <table className="w-full text-sm" dir="rtl">
+                    <table className="w-full text-xs" dir="rtl">
                       <thead>
                         <tr className="bg-[var(--color-background)] text-[var(--color-text-muted)]">
-                          <th className="px-4 py-3 text-right font-medium">שם הקובץ</th>
-                          <th className="px-4 py-3 text-right font-medium">בנק</th>
-                          <th className="px-4 py-3 text-center font-medium">פתיחת קובץ</th>
-                          <th className="px-4 py-3 text-center font-medium">נתונים שחולצו</th>
-                          <th className="px-4 py-3 text-center font-medium">מחיקה</th>
+                          <th className="px-3 py-2 text-right font-medium">שם הקובץ</th>
+                          <th className="px-3 py-2 text-right font-medium">בנק</th>
+                          <th className="px-3 py-2 text-center font-medium">פתיחת קובץ</th>
+                          <th className="px-3 py-2 text-center font-medium">נתונים שחולצו</th>
+                          <th className="px-3 py-2 text-center font-medium">מחיקה</th>
                         </tr>
                       </thead>
                       <tbody>
                         {user.bankResponses.map((r) => (
                           <tr key={r.id} className="border-t border-[var(--color-border-light)] bg-white">
-                            <td className="px-4 py-3 font-medium text-[var(--color-text)]">{r.fileName}</td>
-                            <td className="px-4 py-3">
-                              <span className="inline-flex rounded-full bg-[var(--color-background)] border border-[var(--color-border)] px-3 py-1 text-xs font-medium text-[var(--color-text)]">
+                            <td className="px-3 py-2 font-medium text-[var(--color-text)]">{r.fileName}</td>
+                            <td className="px-3 py-2">
+                              <span className="inline-flex rounded-full bg-[var(--color-background)] border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text)]">
                                 {r.bank}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => handleBankResponseView(r)}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] text-[var(--color-primary)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] text-[var(--color-primary)]"
                                 aria-label="פתח קובץ"
                                 title="פתח קובץ"
                               >
-                                <Eye size={16} />
+                                <Eye size={14} />
                               </button>
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => {
                                   setViewBankData(r)
                                   setViewBankDataOpen(true)
                                 }}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] text-[var(--color-text)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-[var(--color-border-light)] text-[var(--color-text)]"
                                 aria-label="צפייה בנתונים"
                                 title="צפייה בנתונים שחולצו"
                               >
-                                <Eye size={16} />
+                                <Eye size={14} />
                               </button>
                             </td>
-                            <td className="px-4 py-3 text-center">
+                            <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => setDeleteConfirm({ open: true, type: 'bankResponse', id: r.id })}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-red-50 text-[var(--color-danger)]"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-red-50 text-[var(--color-danger)]"
                                 aria-label="מחיקה"
                                 title="מחיקה"
                               >
-                                <Trash2 size={16} />
+                                <Trash2 size={14} />
                               </button>
                             </td>
                           </tr>
@@ -1397,10 +1533,10 @@ export function LeadDetail() {
             </div>
 
             {/* 4) System files */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+            <div className="order-4 h-full rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-4 shadow-sm">
               <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-end sm:justify-between">
                 <div>
-                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">קבצי מערכת</h2>
+                  <h2 className="text-sm sm:text-base font-bold text-[var(--color-text)]">קבצי מערכת</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">מסמכים שנוצרו בסיום השיחה.</p>
                 </div>
               </div>
@@ -1502,47 +1638,119 @@ export function LeadDetail() {
                 )}
               </div>
 
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {BANK_VISIBILITY_OPTIONS.map((bank) => (
-                  <button
-                    key={bank.id}
-                    type="button"
-                    onClick={() => void toggleBankVisibility(bank.id)}
-                    disabled={bankVisibilityLoading || bankVisibilitySaving}
-                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-right transition-colors ${
-                      allowedBankIds.includes(bank.id)
-                        ? 'border-[var(--color-primary)] bg-white'
-                        : 'border-[var(--color-border-light)] bg-[var(--color-background)]'
-                    } disabled:cursor-not-allowed disabled:opacity-70`}
-                    aria-label={`הצגת ${bank.label}`}
-                    aria-pressed={allowedBankIds.includes(bank.id)}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <img
-                        src={bank.logoSrc}
-                        alt={bank.logoAlt}
-                        className="h-8 w-8 rounded-md border border-[var(--color-border-light)] bg-white p-1 object-contain"
-                        loading="lazy"
-                      />
-                      <span className="text-sm font-medium text-[var(--color-text)]">{bank.label}</span>
-                    </div>
-                    <span
-                      className={`inline-flex h-5 w-5 items-center justify-center rounded border ${
-                        allowedBankIds.includes(bank.id)
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
-                          : 'border-[var(--color-border)] bg-white text-transparent'
-                      }`}
-                      aria-hidden="true"
-                    >
-                      <Check size={13} />
-                    </span>
-                  </button>
-                ))}
+              <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
+                <table className="w-full min-w-[760px] text-sm" dir="rtl">
+                  <thead>
+                    <tr className="bg-[var(--color-background)] text-[var(--color-text-muted)]">
+                      <th className="px-4 py-3 text-right font-medium">בנק</th>
+                      <th className="px-4 py-3 text-center font-medium">תצוגה ללקוח בפרונט</th>
+                      <th className="px-4 py-3 text-center font-medium">בנק נבחר / הצעה נבחרת</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {BANK_VISIBILITY_OPTIONS.map((bank) => {
+                      const isVisible = allowedBankIds.includes(bank.id)
+                      const isSelected = selectedDisplayChoice === bank.id
+                      const isBusy = bankVisibilityLoading || bankVisibilitySaving
+
+                      return (
+                        <tr key={bank.id} className="border-t border-[var(--color-border-light)] bg-white">
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={bank.logoSrc}
+                                alt={bank.logoAlt}
+                                className="h-8 w-8 rounded-md border border-[var(--color-border-light)] bg-white p-1 object-contain"
+                                loading="lazy"
+                              />
+                              <span className="text-sm font-medium text-[var(--color-text)]">{bank.label}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => void toggleBankVisibility(bank.id)}
+                              disabled={isBusy}
+                              role="switch"
+                              aria-checked={isVisible}
+                              aria-label={`תצוגה ללקוח עבור ${bank.label}`}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full p-0.5 transition-colors ${
+                                isVisible ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-border)]'
+                              } disabled:cursor-not-allowed disabled:opacity-60`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                                  isVisible ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleDisplayChoice(isSelected ? null : bank.id)}
+                              disabled={!isVisible || isBusy}
+                              className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                                isSelected
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                  : 'border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)]'
+                              } disabled:cursor-not-allowed disabled:opacity-50`}
+                              title={!isVisible ? 'אפשר לבחור בנק רק אם הוא מוצג ללקוח' : 'בחירת בנק נבחר'}
+                            >
+                              {isSelected ? <Check size={14} /> : null}
+                              {isSelected ? 'נבחר' : 'בחר בנק'}
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+
+                    <tr className="border-t border-[var(--color-border-light)] bg-white">
+                      <td className="px-4 py-3 text-right text-sm font-medium text-[var(--color-text)]">הצעה נבחרת</td>
+                      <td className="px-4 py-3 text-center text-xs text-[var(--color-text-muted)]">—</td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDisplayChoice(
+                              selectedDisplayChoice === SELECTED_OFFER_CHOICE ? null : SELECTED_OFFER_CHOICE
+                            )
+                          }
+                          className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                            selectedDisplayChoice === SELECTED_OFFER_CHOICE
+                              ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                              : 'border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)]'
+                          }`}
+                        >
+                          {selectedDisplayChoice === SELECTED_OFFER_CHOICE ? <Check size={14} /> : null}
+                          {selectedDisplayChoice === SELECTED_OFFER_CHOICE ? 'נבחר' : 'בחר הצעה נבחרת'}
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
 
-              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-                {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
-              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
+                </p>
+                <div className="flex flex-row-reverse items-center gap-2">
+                  <span className="text-xs text-[var(--color-text-muted)]">בחירה נוכחית:</span>
+                  <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-background)] px-2.5 py-1 text-xs font-semibold text-[var(--color-text)]">
+                    {selectedDisplayChoiceLabel}
+                  </span>
+                  {selectedDisplayChoice !== null ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDisplayChoice(null)}
+                      className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white px-3 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)]"
+                    >
+                      נקה בחירה
+                    </button>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         </Tabs.Content>
