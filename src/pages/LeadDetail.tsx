@@ -88,13 +88,12 @@ const BANK_VISIBILITY_OPTIONS: Array<{
   { id: 12, label: 'מרכנתיל', logoSrc: '/banks/mercantile.png', logoAlt: 'לוגו בנק מרכנתיל' },
 ]
 const SELECTED_OFFER_CHOICE = 'selected_offer'
-const DISPLAY_CHOICE_STORAGE_PREFIX = 'admin:selected-display-choice:'
 
 const normalizeAllowedBankIds = (ids: number[]) =>
   BANK_VISIBILITY_ORDER.filter((id) => ids.includes(id))
 
-const parseDisplayChoice = (raw: string | null): number | typeof SELECTED_OFFER_CHOICE | null => {
-  if (!raw) return null
+const parseDisplayChoice = (raw: unknown): number | typeof SELECTED_OFFER_CHOICE | null => {
+  if (raw === null || raw === undefined || raw === '') return null
   if (raw === SELECTED_OFFER_CHOICE) return SELECTED_OFFER_CHOICE
   const value = Number(raw)
   if (Number.isInteger(value) && BANK_VISIBILITY_ORDER.includes(value)) {
@@ -267,10 +266,6 @@ export function LeadDetail() {
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
     [templates, selectedTemplateId]
   )
-  const displayChoiceStorageKey = useMemo(
-    () => (user ? `${DISPLAY_CHOICE_STORAGE_PREFIX}${user.id}` : ''),
-    [user?.id]
-  )
   const selectedDisplayChoiceLabel = useMemo(() => {
     if (selectedDisplayChoice === SELECTED_OFFER_CHOICE) return 'הצעה נבחרת'
     if (typeof selectedDisplayChoice === 'number') {
@@ -313,10 +308,12 @@ export function LeadDetail() {
         if (!isMounted) return
         const normalized = normalizeAllowedBankIds(data.allowed_bank_ids ?? [])
         setAllowedBankIds(normalized)
+        setSelectedDisplayChoice(parseDisplayChoice(data.selected_display_choice))
       })
       .catch(() => {
         if (!isMounted) return
         setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
+        setSelectedDisplayChoice(null)
       })
       .finally(() => {
         if (isMounted) setBankVisibilityLoading(false)
@@ -327,22 +324,17 @@ export function LeadDetail() {
   }, [user?.id, user?.mortgageType])
 
   useEffect(() => {
+    if (!user) {
+      setSelectedDisplayChoice(null)
+      return
+    }
     setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
   }, [user?.id, user?.mortgageType])
 
   useEffect(() => {
-    if (!displayChoiceStorageKey) {
-      setSelectedDisplayChoice(null)
-      return
-    }
-    const raw = localStorage.getItem(displayChoiceStorageKey)
-    setSelectedDisplayChoice(parseDisplayChoice(raw))
-  }, [displayChoiceStorageKey])
-
-  useEffect(() => {
     if (typeof selectedDisplayChoice !== 'number') return
     if (allowedBankIds.includes(selectedDisplayChoice)) return
-    handleDisplayChoice(null)
+    void handleDisplayChoice(null)
   }, [allowedBankIds, selectedDisplayChoice])
 
   useEffect(() => {
@@ -452,36 +444,45 @@ export function LeadDetail() {
     }
   }, [user?.id, updateUser])
 
-  const persistDisplayChoice = (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
-    if (!displayChoiceStorageKey) return
-    if (choice === null) {
-      localStorage.removeItem(displayChoiceStorageKey)
-      return
-    }
-    localStorage.setItem(displayChoiceStorageKey, String(choice))
-  }
-
-  const handleDisplayChoice = (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
+  const handleDisplayChoice = async (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
+    if (!user || bankVisibilitySaving) return
+    const previousChoice = selectedDisplayChoice
     setSelectedDisplayChoice(choice)
-    persistDisplayChoice(choice)
+    setBankVisibilitySaving(true)
+    try {
+      const updated = await updateCustomerBankVisibility(user.id, allowedBankIds, choice)
+      setAllowedBankIds(normalizeAllowedBankIds(updated.allowed_bank_ids ?? []))
+      setSelectedDisplayChoice(parseDisplayChoice(updated.selected_display_choice))
+      toast.success('בחירת הבנק נשמרה')
+    } catch (error) {
+      setSelectedDisplayChoice(previousChoice)
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת הבנק הנבחר')
+    } finally {
+      setBankVisibilitySaving(false)
+    }
   }
 
   const toggleBankVisibility = async (bankId: number) => {
     if (!user || bankVisibilitySaving) return
     const prev = allowedBankIds
+    const prevChoice = selectedDisplayChoice
     const next = prev.includes(bankId) ? prev.filter((id) => id !== bankId) : [...prev, bankId]
     const ordered = normalizeAllowedBankIds(next)
-    if (typeof selectedDisplayChoice === 'number' && !ordered.includes(selectedDisplayChoice)) {
-      handleDisplayChoice(null)
-    }
+    const nextChoice =
+      typeof selectedDisplayChoice === 'number' && !ordered.includes(selectedDisplayChoice)
+        ? null
+        : selectedDisplayChoice
     setAllowedBankIds(ordered)
+    setSelectedDisplayChoice(nextChoice)
     setBankVisibilitySaving(true)
     try {
-      const updated = await updateCustomerBankVisibility(user.id, ordered)
+      const updated = await updateCustomerBankVisibility(user.id, ordered, nextChoice)
       setAllowedBankIds(normalizeAllowedBankIds(updated.allowed_bank_ids ?? []))
+      setSelectedDisplayChoice(parseDisplayChoice(updated.selected_display_choice))
       toast.success('הרשאות הבנקים עודכנו')
     } catch (error) {
       setAllowedBankIds(prev)
+      setSelectedDisplayChoice(prevChoice)
       toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון הבנקים')
     } finally {
       setBankVisibilitySaving(false)
@@ -718,6 +719,42 @@ export function LeadDetail() {
     setQuestionnairePage((prev) => Math.min(prev, questionnaireTotalPages))
   }, [questionnaireTotalPages])
 
+  useEffect(() => {
+    if (!signatureModalOpen) return undefined
+    setAdminSignatureReady(false)
+    setAdminSignatureSigner({
+      name: `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim(),
+      idNumber: '',
+      phone: user?.phone ?? '',
+      mail: user?.email ?? '',
+    })
+
+    const initCanvas = () => {
+      const canvas = signatureCanvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      const ratio = window.devicePixelRatio || 1
+      canvas.width = rect.width * ratio
+      canvas.height = rect.height * ratio
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+      ctx.lineWidth = 3.5
+      ctx.lineCap = 'round'
+      ctx.strokeStyle = '#1d4ed8'
+      signatureCtxRef.current = ctx
+    }
+
+    const rafId = window.requestAnimationFrame(initCanvas)
+    window.addEventListener('resize', initCanvas)
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', initCanvas)
+      signatureDrawingRef.current = false
+    }
+  }, [signatureModalOpen, user?.firstName, user?.lastName, user?.phone, user?.email])
+
   if (!user) {
     return (
       <div className="space-y-4">
@@ -800,42 +837,6 @@ export function LeadDetail() {
       setSignatureDownloadLoading(false)
     }
   }
-
-  useEffect(() => {
-    if (!signatureModalOpen) return undefined
-    setAdminSignatureReady(false)
-    setAdminSignatureSigner({
-      name: `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim(),
-      idNumber: '',
-      phone: user?.phone ?? '',
-      mail: user?.email ?? '',
-    })
-
-    const initCanvas = () => {
-      const canvas = signatureCanvasRef.current
-      if (!canvas) return
-      const rect = canvas.getBoundingClientRect()
-      if (!rect.width || !rect.height) return
-      const ratio = window.devicePixelRatio || 1
-      canvas.width = rect.width * ratio
-      canvas.height = rect.height * ratio
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-      ctx.lineWidth = 3.5
-      ctx.lineCap = 'round'
-      ctx.strokeStyle = '#1d4ed8'
-      signatureCtxRef.current = ctx
-    }
-
-    const rafId = window.requestAnimationFrame(initCanvas)
-    window.addEventListener('resize', initCanvas)
-    return () => {
-      window.cancelAnimationFrame(rafId)
-      window.removeEventListener('resize', initCanvas)
-      signatureDrawingRef.current = false
-    }
-  }, [signatureModalOpen, user?.firstName, user?.lastName, user?.phone, user?.email])
 
   const getSignaturePoint = (event: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect()
@@ -1915,7 +1916,9 @@ export function LeadDetail() {
                           <td className="px-4 py-3 text-center">
                             <button
                               type="button"
-                              onClick={() => handleDisplayChoice(isSelected ? null : bank.id)}
+                              onClick={() => {
+                                void handleDisplayChoice(isSelected ? null : bank.id)
+                              }}
                               disabled={!isVisible || isBusy}
                               className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                                 isSelected
@@ -1938,11 +1941,11 @@ export function LeadDetail() {
                       <td className="px-4 py-3 text-center">
                         <button
                           type="button"
-                          onClick={() =>
-                            handleDisplayChoice(
+                          onClick={() => {
+                            void handleDisplayChoice(
                               selectedDisplayChoice === SELECTED_OFFER_CHOICE ? null : SELECTED_OFFER_CHOICE
                             )
-                          }
+                          }}
                           className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                             selectedDisplayChoice === SELECTED_OFFER_CHOICE
                               ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
@@ -1970,7 +1973,9 @@ export function LeadDetail() {
                   {selectedDisplayChoice !== null ? (
                     <button
                       type="button"
-                      onClick={() => handleDisplayChoice(null)}
+                      onClick={() => {
+                        void handleDisplayChoice(null)
+                      }}
                       className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white px-3 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)]"
                     >
                       נקה בחירה

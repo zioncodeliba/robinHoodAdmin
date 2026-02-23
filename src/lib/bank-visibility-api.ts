@@ -3,6 +3,7 @@ import { getActiveAdminAuth } from '@/lib/auth-storage'
 export type CustomerBankVisibility = {
   user_id: string
   allowed_bank_ids: number[]
+  selected_display_choice?: number | 'selected_offer' | null
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -65,10 +66,20 @@ export async function fetchCustomerBankVisibility(userId: string): Promise<Custo
 
 export async function updateCustomerBankVisibility(
   userId: string,
-  allowedBankIds: number[]
+  allowedBankIds: number[],
+  selectedDisplayChoice?: number | 'selected_offer' | null,
 ): Promise<CustomerBankVisibility> {
+  const payload: {
+    allowed_bank_ids: number[]
+    selected_display_choice?: number | 'selected_offer' | null
+  } = {
+    allowed_bank_ids: allowedBankIds,
+  }
+  if (selectedDisplayChoice !== undefined) {
+    payload.selected_display_choice = selectedDisplayChoice
+  }
   return request<CustomerBankVisibility>(`/customers/${userId}/bank-visibility`, {
     method: 'PATCH',
-    body: JSON.stringify({ allowed_bank_ids: allowedBankIds }),
+    body: JSON.stringify(payload),
   })
 }
