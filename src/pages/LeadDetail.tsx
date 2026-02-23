@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import * as Slider from '@radix-ui/react-slider'
@@ -34,7 +34,14 @@ import { useMessages } from '@/lib/messages-store'
 import { fetchChatHistoryForUser, type ChatHistoryItem } from '@/lib/chatbot-history-api'
 import { fetchCustomerBankVisibility, updateCustomerBankVisibility } from '@/lib/bank-visibility-api'
 import { deleteBankResponse, downloadBankResponseFile, fetchBankResponses, uploadBankResponseForUser, type BankResponseItem } from '@/lib/bank-responses-api'
-import { downloadCustomerFile, fetchCustomerFiles } from '@/lib/customer-files-api'
+import {
+  deleteCustomerFile,
+  downloadCustomerFile,
+  fetchCustomerFiles,
+  type AdminSignatureSignerInput,
+  uploadCustomerSignatureForUser,
+  type CustomerFileItem,
+} from '@/lib/customer-files-api'
 import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
 import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
 import { getCurrentAdminProfile } from '@/lib/admin-profile'
@@ -176,7 +183,7 @@ export function LeadDetail() {
   const [deleteSaving, setDeleteSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{
     open: boolean
-    type: 'bankResponse' | 'simulatorOffer' | 'clientPayment' | null
+    type: 'bankResponse' | 'systemFile' | 'signatureDoc' | 'simulatorOffer' | 'clientPayment' | null
     id: string | null
   }>({ open: false, type: null, id: null })
 
@@ -235,6 +242,15 @@ export function LeadDetail() {
   const [bankResponsesLoading, setBankResponsesLoading] = useState(false)
   const [systemFiles, setSystemFiles] = useState<{ id: string; originalName: string; uploadedAt: string }[]>([])
   const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
+  const [signatureModalOpen, setSignatureModalOpen] = useState(false)
+  const [adminSignatureReady, setAdminSignatureReady] = useState(false)
+  const [adminSignatureSaving, setAdminSignatureSaving] = useState(false)
+  const [adminSignatureSigner, setAdminSignatureSigner] = useState<AdminSignatureSignerInput>({
+    name: '',
+    idNumber: '',
+    phone: '',
+    mail: '',
+  })
   const [allowedBankIds, setAllowedBankIds] = useState<number[]>(() =>
     getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
   )
@@ -243,6 +259,9 @@ export function LeadDetail() {
   const [selectedDisplayChoice, setSelectedDisplayChoice] = useState<number | typeof SELECTED_OFFER_CHOICE | null>(null)
   const [questionnairePage, setQuestionnairePage] = useState(1)
   const [questionnairePageSize, setQuestionnairePageSize] = useState(10)
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const signatureCtxRef = useRef<CanvasRenderingContext2D | null>(null)
+  const signatureDrawingRef = useRef(false)
 
   const selectedTemplate = useMemo(() => 
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
@@ -346,6 +365,49 @@ export function LeadDetail() {
     }
   }, [user?.id, updateUser])
 
+  const applyCustomerFilesData = (targetUserId: string, data: CustomerFileItem[]) => {
+    const systemItems = data.filter((item) => item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX))
+    const bankItems = data.filter((item) => item.original_name.startsWith(BANK_SIGNATURE_PREFIX))
+    const customerItems = data.filter(
+      (item) =>
+        !item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX) &&
+        !item.original_name.startsWith(BANK_SIGNATURE_PREFIX)
+    )
+
+    const mappedSystem = systemItems.map((item) => {
+      const uploadedDate = new Date(item.uploaded_at)
+      const uploadedAt = Number.isNaN(uploadedDate.getTime())
+        ? item.uploaded_at
+        : uploadedDate.toISOString().slice(0, 10)
+      return {
+        id: item.id,
+        originalName: item.original_name,
+        uploadedAt,
+      }
+    })
+
+    const mapped = customerItems.map((item) => {
+      const uploadedDate = new Date(item.uploaded_at)
+      const uploadedAt = Number.isNaN(uploadedDate.getTime())
+        ? item.uploaded_at
+        : uploadedDate.toISOString().slice(0, 10)
+      return {
+        id: item.id,
+        originalName: item.original_name,
+        uploadedBy: 'לקוח',
+        uploadedAt,
+      }
+    })
+    const mappedSignatureDocs = bankItems.map((item) => ({
+      id: item.id,
+      name: item.original_name,
+      status: 'נחתם' as SignatureDocStatus,
+      fileName: item.original_name,
+    }))
+    setSystemFiles(mappedSystem)
+    updateUser(targetUserId, { uploadedFiles: mapped, signatureDocs: mappedSignatureDocs } as Partial<UserRecord>)
+  }
+
   useEffect(() => {
     if (!user) return
     let isMounted = true
@@ -354,46 +416,7 @@ export function LeadDetail() {
     fetchCustomerFiles(user.id)
       .then((data) => {
         if (!isMounted) return
-        const systemItems = data.filter((item) => item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX))
-        const bankItems = data.filter((item) => item.original_name.startsWith(BANK_SIGNATURE_PREFIX))
-        const customerItems = data.filter(
-          (item) =>
-            !item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX) &&
-            !item.original_name.startsWith(BANK_SIGNATURE_PREFIX)
-        )
-
-        const mappedSystem = systemItems.map((item) => {
-          const uploadedDate = new Date(item.uploaded_at)
-          const uploadedAt = Number.isNaN(uploadedDate.getTime())
-            ? item.uploaded_at
-            : uploadedDate.toISOString().slice(0, 10)
-          return {
-            id: item.id,
-            originalName: item.original_name,
-            uploadedAt,
-          }
-        })
-
-        const mapped = customerItems.map((item) => {
-          const uploadedDate = new Date(item.uploaded_at)
-          const uploadedAt = Number.isNaN(uploadedDate.getTime())
-            ? item.uploaded_at
-            : uploadedDate.toISOString().slice(0, 10)
-          return {
-            id: item.id,
-            originalName: item.original_name,
-            uploadedBy: 'לקוח',
-            uploadedAt,
-          }
-        })
-        const mappedSignatureDocs = bankItems.map((item) => ({
-          id: item.id,
-          name: item.original_name,
-          status: 'נחתם' as SignatureDocStatus,
-          fileName: item.original_name,
-        }))
-        setSystemFiles(mappedSystem)
-        updateUser(user.id, { uploadedFiles: mapped, signatureDocs: mappedSignatureDocs } as Partial<UserRecord>)
+        applyCustomerFilesData(user.id, data)
       })
       .catch((error) => {
         if (!isMounted) return
@@ -517,6 +540,32 @@ export function LeadDetail() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
     }
+  }
+
+  const handleSystemFileDelete = (fileId: string) => {
+    if (!user) return
+    deleteCustomerFile(fileId)
+      .then(() => {
+        setSystemFiles((prev) => prev.filter((item) => item.id !== fileId))
+        toast.success('הקובץ נמחק')
+      })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת הקובץ')
+      })
+  }
+
+  const handleSignatureDocDelete = (fileId: string) => {
+    if (!user) return
+    deleteCustomerFile(fileId)
+      .then(() => {
+        updateUser(user.id, {
+          signatureDocs: user.signatureDocs.filter((item) => item.id !== fileId),
+        } as Partial<UserRecord>)
+        toast.success('הקובץ נמחק')
+      })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת הקובץ')
+      })
   }
 
   const mapBankResponseItem = (item: BankResponseItem): BankResponseFile => {
@@ -749,6 +798,147 @@ export function LeadDetail() {
       toast.error(error instanceof Error ? error.message : 'שגיאה בהורדת הקובץ')
     } finally {
       setSignatureDownloadLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!signatureModalOpen) return undefined
+    setAdminSignatureReady(false)
+    setAdminSignatureSigner({
+      name: `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim(),
+      idNumber: '',
+      phone: user?.phone ?? '',
+      mail: user?.email ?? '',
+    })
+
+    const initCanvas = () => {
+      const canvas = signatureCanvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      const ratio = window.devicePixelRatio || 1
+      canvas.width = rect.width * ratio
+      canvas.height = rect.height * ratio
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+      ctx.lineWidth = 3.5
+      ctx.lineCap = 'round'
+      ctx.strokeStyle = '#1d4ed8'
+      signatureCtxRef.current = ctx
+    }
+
+    const rafId = window.requestAnimationFrame(initCanvas)
+    window.addEventListener('resize', initCanvas)
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', initCanvas)
+      signatureDrawingRef.current = false
+    }
+  }, [signatureModalOpen, user?.firstName, user?.lastName, user?.phone, user?.email])
+
+  const getSignaturePoint = (event: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    }
+  }
+
+  const handleSignaturePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current
+    const ctx = signatureCtxRef.current
+    if (!canvas || !ctx) return
+    event.preventDefault()
+    signatureDrawingRef.current = true
+    canvas.setPointerCapture?.(event.pointerId)
+    const { x, y } = getSignaturePoint(event, canvas)
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+  }
+
+  const handleSignaturePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current
+    const ctx = signatureCtxRef.current
+    if (!canvas || !ctx || !signatureDrawingRef.current) return
+    event.preventDefault()
+    const { x, y } = getSignaturePoint(event, canvas)
+    ctx.lineTo(x, y)
+    ctx.stroke()
+    setAdminSignatureReady(true)
+  }
+
+  const handleSignaturePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signatureCanvasRef.current
+    const ctx = signatureCtxRef.current
+    if (!canvas || !ctx) return
+    event.preventDefault()
+    signatureDrawingRef.current = false
+    canvas.releasePointerCapture?.(event.pointerId)
+  }
+
+  const clearAdminSignaturePad = () => {
+    const canvas = signatureCanvasRef.current
+    const ctx = signatureCtxRef.current
+    if (!canvas || !ctx) return
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.beginPath()
+    signatureDrawingRef.current = false
+    setAdminSignatureReady(false)
+  }
+
+  const handleAdminSignatureSave = async () => {
+    if (!user) return
+    const sessionId = latestSessionInfo?.sessionId
+    if (!sessionId) {
+      toast.error('לא נמצאה שיחה פעילה להטמעת חתימה')
+      return
+    }
+    const signerName = adminSignatureSigner.name.trim()
+    const signerIdNumber = adminSignatureSigner.idNumber.trim()
+    const signerPhone = adminSignatureSigner.phone.trim()
+    const signerMail = adminSignatureSigner.mail.trim()
+    if (!signerName || !signerIdNumber || !signerPhone || !signerMail) {
+      toast.error('יש למלא שם מלא, ת.ז, טלפון ומייל לפני שמירה')
+      return
+    }
+    if (!adminSignatureReady) {
+      toast.error('נא לחתום לפני שמירה')
+      return
+    }
+    const canvas = signatureCanvasRef.current
+    if (!canvas) {
+      toast.error('לא ניתן לשמור חתימה')
+      return
+    }
+
+    setAdminSignatureSaving(true)
+    try {
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((fileBlob) => resolve(fileBlob), 'image/png')
+      })
+      if (!blob) {
+        throw new Error('לא ניתן לשמור חתימה')
+      }
+      const signatureFile = new File(
+        [blob],
+        `admin_signature_${sessionId}_${Date.now()}.png`,
+        { type: 'image/png' },
+      )
+      await uploadCustomerSignatureForUser(user.id, String(sessionId), signatureFile, {
+        name: signerName,
+        idNumber: signerIdNumber,
+        phone: signerPhone,
+        mail: signerMail,
+      })
+      const data = await fetchCustomerFiles(user.id)
+      applyCustomerFilesData(user.id, data)
+      setSignatureModalOpen(false)
+      toast.success('החתימה נשמרה והוטמעה במסמכים')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת החתימה')
+    } finally {
+      setAdminSignatureSaving(false)
     }
   }
 
@@ -1292,6 +1482,13 @@ export function LeadDetail() {
                             >
                               <Download size={14} />
                             </button>
+                            <button
+                              onClick={() => setDeleteConfirm({ open: true, type: 'signatureDoc', id: d.id })}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-danger)]"
+                              aria-label="מחיקה"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1315,6 +1512,7 @@ export function LeadDetail() {
                           <th className="px-3 py-2 text-right font-medium">סטטוס</th>
                           <th className="px-3 py-2 text-center font-medium">צפייה</th>
                           <th className="px-3 py-2 text-center font-medium">הורדה</th>
+                          <th className="px-3 py-2 text-center font-medium">מחיקה</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1368,6 +1566,16 @@ export function LeadDetail() {
                                 title="הורדה"
                               >
                                 <Download size={14} />
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => setDeleteConfirm({ open: true, type: 'signatureDoc', id: d.id })}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-red-50 text-[var(--color-danger)]"
+                                aria-label="מחיקה"
+                                title="מחיקה"
+                              >
+                                <Trash2 size={14} />
                               </button>
                             </td>
                           </tr>
@@ -1539,6 +1747,16 @@ export function LeadDetail() {
                   <h2 className="text-sm sm:text-base font-bold text-[var(--color-text)]">קבצי מערכת</h2>
                   <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">מסמכים שנוצרו בסיום השיחה.</p>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSignatureModalOpen(true)}
+                  disabled={!latestSessionInfo || adminSignatureSaving}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus size={16} />
+                  הוספת חתימה
+                </Button>
               </div>
 
               <div className="mt-4">
@@ -1611,6 +1829,15 @@ export function LeadDetail() {
                             >
                               <Download size={16} />
                               הורדה
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setDeleteConfirm({ open: true, type: 'systemFile', id: file.id })}
+                              className="w-full sm:w-auto text-[var(--color-danger)] hover:bg-red-50"
+                            >
+                              <Trash2 size={16} />
+                              מחיקה
                             </Button>
                           </div>
                         </div>
@@ -2389,13 +2616,17 @@ export function LeadDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation for bank responses, simulator offers, and payments */}
+      {/* Delete confirmation for bank responses, system files, signature docs, simulator offers, and payments */}
       <ConfirmDialog
         open={deleteConfirm.open}
         onOpenChange={(open) => setDeleteConfirm({ open, type: null, id: null })}
         title={
           deleteConfirm.type === 'bankResponse'
             ? 'מחיקת תשובת בנק'
+            : deleteConfirm.type === 'systemFile'
+            ? 'מחיקת קובץ מערכת'
+            : deleteConfirm.type === 'signatureDoc'
+            ? 'מחיקת קובץ חתימה'
             : deleteConfirm.type === 'clientPayment'
             ? 'מחיקת תשלום'
             : 'מחיקת מסלול'
@@ -2403,6 +2634,10 @@ export function LeadDetail() {
         description={
           deleteConfirm.type === 'bankResponse'
             ? 'האם אתה בטוח שברצונך למחוק את תשובת הבנק? פעולה זו אינה ניתנת לביטול.'
+            : deleteConfirm.type === 'systemFile'
+            ? 'האם אתה בטוח שברצונך למחוק את קובץ המערכת? פעולה זו אינה ניתנת לביטול.'
+            : deleteConfirm.type === 'signatureDoc'
+            ? 'האם אתה בטוח שברצונך למחוק את קובץ החתימה? פעולה זו אינה ניתנת לביטול.'
             : deleteConfirm.type === 'clientPayment'
             ? 'האם אתה בטוח שברצונך למחוק את התשלום? פעולה זו אינה ניתנת לביטול.'
             : 'האם אתה בטוח שברצונך למחוק את המסלול? פעולה זו אינה ניתנת לביטול.'
@@ -2420,6 +2655,10 @@ export function LeadDetail() {
               .catch((error) => {
                 toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת תשובת בנק')
               })
+          } else if (deleteConfirm.id && deleteConfirm.type === 'systemFile') {
+            handleSystemFileDelete(deleteConfirm.id)
+          } else if (deleteConfirm.id && deleteConfirm.type === 'signatureDoc') {
+            handleSignatureDocDelete(deleteConfirm.id)
           } else if (deleteConfirm.id && deleteConfirm.type === 'simulatorOffer') {
             updateUser(user.id, {
               simulatorOffers: user.simulatorOffers.filter((x) => x.id !== deleteConfirm.id),
@@ -2457,6 +2696,137 @@ export function LeadDetail() {
             })
         }}
       />
+
+      <Dialog
+        open={signatureModalOpen}
+        onOpenChange={(open) => {
+          if (!adminSignatureSaving) {
+            setSignatureModalOpen(open)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>הוספת חתימה לקבצי מערכת</DialogTitle>
+            <DialogDescription>
+              החתימה תישמר כקובץ מערכת ותוטמע במסמך ה-PDF באמצעות אותה לוגיקת הטמעה של הפרונט.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!latestSessionInfo ? (
+            <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+              אין סשן זמין עבור הלקוח, לא ניתן להוסיף חתימה כרגע.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 text-xs text-[var(--color-text-muted)] text-right" dir="ltr">
+                {`session_${latestSessionInfo.sessionId}.pdf`}
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs text-[var(--color-text-muted)]">שם מלא</label>
+                  <input
+                    type="text"
+                    value={adminSignatureSigner.name}
+                    onChange={(event) => {
+                      setAdminSignatureSigner((prev) => ({ ...prev, name: event.target.value }))
+                    }}
+                    className="mt-1 h-10 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="שם פרטי ושם משפחה"
+                    disabled={adminSignatureSaving}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--color-text-muted)]">ת.ז</label>
+                  <input
+                    type="text"
+                    value={adminSignatureSigner.idNumber}
+                    onChange={(event) => {
+                      setAdminSignatureSigner((prev) => ({ ...prev, idNumber: event.target.value }))
+                    }}
+                    className="mt-1 h-10 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="תעודת זהות"
+                    disabled={adminSignatureSaving}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--color-text-muted)]">טלפון</label>
+                  <input
+                    type="text"
+                    value={adminSignatureSigner.phone}
+                    onChange={(event) => {
+                      setAdminSignatureSigner((prev) => ({ ...prev, phone: event.target.value }))
+                    }}
+                    className="mt-1 h-10 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="טלפון"
+                    disabled={adminSignatureSaving}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--color-text-muted)]">מייל</label>
+                  <input
+                    type="email"
+                    value={adminSignatureSigner.mail}
+                    onChange={(event) => {
+                      setAdminSignatureSigner((prev) => ({ ...prev, mail: event.target.value }))
+                    }}
+                    className="mt-1 h-10 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="email@example.com"
+                    disabled={adminSignatureSaving}
+                  />
+                </div>
+              </div>
+              <div className="relative h-40 overflow-hidden rounded-xl border border-[var(--color-border-light)] bg-[#f5f5f5]">
+                {!adminSignatureReady && (
+                  <span className="pointer-events-none absolute left-3 bottom-3 text-xs text-[var(--color-text-muted)]">
+                    נא לחתום כאן
+                  </span>
+                )}
+                <canvas
+                  ref={signatureCanvasRef}
+                  className="h-full w-full touch-none"
+                  style={{ touchAction: 'none' }}
+                  onPointerDown={handleSignaturePointerDown}
+                  onPointerMove={handleSignaturePointerMove}
+                  onPointerUp={handleSignaturePointerUp}
+                  onPointerLeave={handleSignaturePointerUp}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-col-reverse sm:flex-row items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSignatureModalOpen(false)
+              }}
+              className="w-full sm:w-auto"
+              disabled={adminSignatureSaving}
+            >
+              ביטול
+            </Button>
+            <Button
+              variant="outline"
+              onClick={clearAdminSignaturePad}
+              className="w-full sm:w-auto"
+              disabled={adminSignatureSaving || !latestSessionInfo}
+            >
+              נקה חתימה
+            </Button>
+            <Button
+              variant="accent"
+              onClick={() => {
+                void handleAdminSignatureSave()
+              }}
+              className="w-full sm:w-auto"
+              disabled={adminSignatureSaving || !latestSessionInfo || !adminSignatureReady}
+            >
+              {adminSignatureSaving ? 'שומר...' : 'שמור והטמע'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Upload bank file modal */}
       <Dialog open={bankUploadOpen} onOpenChange={setBankUploadOpen}>

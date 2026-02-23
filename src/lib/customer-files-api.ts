@@ -9,6 +9,13 @@ export type CustomerFileItem = {
   uploaded_at: string
 }
 
+export type AdminSignatureSignerInput = {
+  name: string
+  idNumber: string
+  phone: string
+  mail: string
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
 const AUTH_BASE = `${API_BASE}/auth/v1`
 
@@ -93,4 +100,52 @@ export async function downloadCustomerFile(fileId: string): Promise<{ blob: Blob
   const blob = await response.blob()
   const filename = getFilenameFromHeader(response.headers.get('content-disposition'), 'file')
   return { blob, filename }
+}
+
+export async function deleteCustomerFile(fileId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/customer-files/${fileId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function uploadCustomerSignatureForUser(
+  userId: string,
+  sessionId: string,
+  file: File,
+  signer?: AdminSignatureSignerInput,
+): Promise<CustomerFileItem> {
+  const formData = new FormData()
+  formData.append('session_id', sessionId)
+  formData.append('file', file)
+  if (signer?.name.trim()) {
+    formData.append('borrower_name', signer.name.trim())
+  }
+  if (signer?.idNumber.trim()) {
+    formData.append('borrower_id_number', signer.idNumber.trim())
+  }
+  if (signer?.phone.trim()) {
+    formData.append('borrower_phone', signer.phone.trim())
+  }
+  if (signer?.mail.trim()) {
+    formData.append('borrower_mail', signer.mail.trim())
+  }
+
+  const response = await fetch(`${AUTH_BASE}/customer-files/by-user/${userId}/signature`, {
+    method: 'POST',
+    headers: {
+      ...getAuthHeader(),
+    },
+    body: formData,
+  })
+
+  const payload = await parseJson<CustomerFileItem | { detail?: string }>(response)
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, 'Request failed'))
+  }
+
+  if (!payload || !('id' in payload)) {
+    throw new Error('Unexpected empty response')
+  }
+
+  return payload
 }
