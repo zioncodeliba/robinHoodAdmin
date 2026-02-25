@@ -1,41 +1,22 @@
-import type { LeadStatus } from '@/types'
 import { forceLogout, getStoredAuth } from '@/lib/auth-storage'
+import type { MessageTemplateTrigger } from '@/types'
 
-export type CustomerCreateInput = {
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  gender: 'male' | 'female'
-}
-
-export type CustomerUpdateInput = Partial<Omit<CustomerCreateInput, 'gender'>> & {
-  gender?: never
-  offers_carousel_note?: string
-  offers_carousel_note_visible?: boolean
-}
-
-export type CustomerItem = {
+export type MessageTemplateItem = {
   id: string
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  offers_carousel_note?: string
-  offers_carousel_note_visible?: boolean
-  created_at: string
-  last_activity_at: string
-}
-
-export type CustomerDeleteResponse = {
+  name: string
+  trigger: MessageTemplateTrigger
   message: string
-  id: string
-  deleted: boolean
+  created_at: string
+  updated_at: string
 }
+
+export type MessageTemplateCreateInput = {
+  name: string
+  trigger: MessageTemplateTrigger
+  message: string
+}
+
+export type MessageTemplateUpdateInput = Partial<MessageTemplateCreateInput>
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
 const AUTH_BASE = `${API_BASE}/auth/v1`
@@ -95,30 +76,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload
 }
 
-export async function fetchCustomers(): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>('/customers')
+export async function fetchMessageTemplates(): Promise<MessageTemplateItem[]> {
+  return request<MessageTemplateItem[]>('/message-templates')
 }
 
-export async function fetchAffiliateCustomers(affiliateId: string): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>(`/affiliates/${affiliateId}/customers`)
-}
-
-export async function createCustomer(payload: CustomerCreateInput): Promise<CustomerItem> {
-  return request<CustomerItem>('/customers', {
+export async function createMessageTemplate(payload: MessageTemplateCreateInput): Promise<MessageTemplateItem> {
+  return request<MessageTemplateItem>('/message-templates', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
-export async function updateCustomer(userId: string, payload: CustomerUpdateInput): Promise<CustomerItem> {
-  return request<CustomerItem>(`/customers/${userId}`, {
+export async function updateMessageTemplate(
+  templateId: string,
+  payload: MessageTemplateUpdateInput
+): Promise<MessageTemplateItem> {
+  return request<MessageTemplateItem>(`/message-templates/${templateId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }
 
-export async function deleteCustomer(userId: string): Promise<CustomerDeleteResponse> {
-  return request<CustomerDeleteResponse>(`/customers/${userId}`, {
+export async function deleteMessageTemplate(templateId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/message-templates/${templateId}`, {
     method: 'DELETE',
   })
 }

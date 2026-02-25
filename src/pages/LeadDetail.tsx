@@ -45,7 +45,18 @@ import {
 import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
 import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
 import { getCurrentAdminProfile } from '@/lib/admin-profile'
-import type { BankName, BankResponseExtractedData, BankResponseFile, LeadStatus, MortgageType, SignatureDocStatus, UserRecord, SentMessage } from '@/types'
+import type {
+  BankName,
+  BankResponseExtractedData,
+  BankResponseFile,
+  LeadStatus,
+  MessageTemplate,
+  MessageTemplateTrigger,
+  MortgageType,
+  SignatureDocStatus,
+  UserRecord,
+  SentMessage,
+} from '@/types'
 
 const loanTypeLabels: Record<number, string> = {
   1: 'קבועה צמודה',
@@ -105,6 +116,67 @@ const parseDisplayChoice = (raw: unknown): number | typeof SELECTED_OFFER_CHOICE
 const getDefaultAllowedBankIdsForMortgageType = (mortgageType?: MortgageType): number[] =>
   mortgageType === 'משכנתא חדשה' ? [...BANK_VISIBILITY_ORDER] : []
 
+const BANK_VISIBILITY_NOTIFICATION_TITLE = 'עדכון בנקים לאישור עקרוני'
+const BANK_VISIBILITY_TEMPLATE_TRIGGERS: MessageTemplateTrigger[] = [
+  'ממתין לאישור עקרוני',
+  'סיום צ׳אט בהצלחה',
+  'מחזור - יש הצעה',
+]
+const DEFAULT_OFFERS_CAROUSEL_NOTE =
+  'נשלח בקשה לאישור עקרוני לכלל הבנקים כשיתקבלו האישורים ישלח עדכון.'
+
+const getBankLabelsFromIds = (allowedIds: number[]) =>
+  normalizeAllowedBankIds(allowedIds)
+    .map((id) => BANK_VISIBILITY_OPTIONS.find((item) => item.id === id)?.label)
+    .filter((label): label is string => Boolean(label))
+
+const buildBankVisibilityNotificationMessage = (allowedIds: number[]) => {
+  const labels = getBankLabelsFromIds(allowedIds)
+
+  if (labels.length === 0) {
+    return 'עודכנו הבנקים לשליחת אישור עקרוני. כרגע אין בנקים שנבחרו לשליחה.'
+  }
+
+  return `עודכנו הבנקים לשליחת אישור עקרוני. הבנקים שנבחרו: ${labels.join(', ')}.`
+}
+
+const resolveBankVisibilityTemplate = (
+  templates: MessageTemplate[],
+  customerStatus?: LeadStatus
+): MessageTemplate | null => {
+  const byTrigger = templates.filter((template) =>
+    BANK_VISIBILITY_TEMPLATE_TRIGGERS.includes(template.trigger)
+  )
+  if (byTrigger.length === 0) return null
+  if (customerStatus) {
+    const exact = byTrigger.find((template) => template.trigger === customerStatus)
+    if (exact) return exact
+  }
+  return byTrigger[0] ?? null
+}
+
+const resolveTemplateByTrigger = (
+  templates: MessageTemplate[],
+  trigger: LeadStatus
+): MessageTemplate | null =>
+  templates.find((template) => template.trigger === trigger) ?? null
+
+const buildTemplateMessage = (
+  templateMessage: string,
+  firstName: string,
+  lastName: string,
+  bankLabels: string[] = []
+) =>
+  templateMessage
+    .replace(/\{שם\}/g, `${firstName} ${lastName}`.trim())
+    .replace(/\{בנקים\}/g, bankLabels.length > 0 ? bankLabels.join(', ') : 'לא נבחרו בנקים')
+
+const formatAmountWithCommas = (value: string) => {
+  const digitsOnly = value.replace(/[^\d]/g, '')
+  if (!digitsOnly) return ''
+  return digitsOnly.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+}
+
 
 const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
   id: item.id,
@@ -162,6 +234,9 @@ export function LeadDetail() {
   const { users, updateUser, deleteUser, updateCustomer } = useUsers()
   const { affiliates } = useAffiliates()
   const currentAdmin = getCurrentAdminProfile()
+  const freeMessageTitle = currentAdmin.name?.trim()
+    ? `הודעה מאת ${currentAdmin.name.trim()}`
+    : 'הודעה מאת אדמין'
 
   const user = useMemo(() => users.find((u) => u.id === id) ?? null, [users, id])
   const [activeTab, setActiveTab] = useState<ActiveTab>('questionnaire')
@@ -230,6 +305,12 @@ export function LeadDetail() {
   // Messages/Updates state
   const { templates } = useMessages()
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+  const [messageDraft, setMessageDraft] = useState<string>('')
+  const [offersCarouselNote, setOffersCarouselNote] = useState<string>(DEFAULT_OFFERS_CAROUSEL_NOTE)
+  const [offersCarouselNoteVisible, setOffersCarouselNoteVisible] = useState<boolean>(true)
+  const [savedOffersCarouselNote, setSavedOffersCarouselNote] = useState<string>(DEFAULT_OFFERS_CAROUSEL_NOTE)
+  const [savedOffersCarouselNoteVisible, setSavedOffersCarouselNoteVisible] = useState<boolean>(true)
+  const [offersCarouselSaving, setOffersCarouselSaving] = useState(false)
   const [deleteMessageConfirm, setDeleteMessageConfirm] = useState<{ open: boolean; messageId: string | null }>({
     open: false,
     messageId: null,
@@ -253,9 +334,15 @@ export function LeadDetail() {
   const [allowedBankIds, setAllowedBankIds] = useState<number[]>(() =>
     getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
   )
+  const [savedAllowedBankIds, setSavedAllowedBankIds] = useState<number[]>(() =>
+    getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
+  )
   const [bankVisibilityLoading, setBankVisibilityLoading] = useState(false)
   const [bankVisibilitySaving, setBankVisibilitySaving] = useState(false)
   const [selectedDisplayChoice, setSelectedDisplayChoice] = useState<number | typeof SELECTED_OFFER_CHOICE | null>(null)
+  const [savedSelectedDisplayChoice, setSavedSelectedDisplayChoice] = useState<number | typeof SELECTED_OFFER_CHOICE | null>(
+    null
+  )
   const [questionnairePage, setQuestionnairePage] = useState(1)
   const [questionnairePageSize, setQuestionnairePageSize] = useState(10)
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -266,6 +353,16 @@ export function LeadDetail() {
     templates.find((t) => t.id === selectedTemplateId) ?? null, 
     [templates, selectedTemplateId]
   )
+  const normalizedOffersCarouselNote = useMemo(
+    () => offersCarouselNote.trim() || DEFAULT_OFFERS_CAROUSEL_NOTE,
+    [offersCarouselNote]
+  )
+  const hasUnsavedOffersCarouselSettings = useMemo(
+    () =>
+      normalizedOffersCarouselNote !== savedOffersCarouselNote ||
+      offersCarouselNoteVisible !== savedOffersCarouselNoteVisible,
+    [normalizedOffersCarouselNote, offersCarouselNoteVisible, savedOffersCarouselNote, savedOffersCarouselNoteVisible]
+  )
   const selectedDisplayChoiceLabel = useMemo(() => {
     if (selectedDisplayChoice === SELECTED_OFFER_CHOICE) return 'הצעה נבחרת'
     if (typeof selectedDisplayChoice === 'number') {
@@ -273,10 +370,25 @@ export function LeadDetail() {
     }
     return 'לא נבחר'
   }, [selectedDisplayChoice])
+  const hasUnsavedBankVisibilityChanges = useMemo(() => {
+    if (selectedDisplayChoice !== savedSelectedDisplayChoice) return true
+    if (allowedBankIds.length !== savedAllowedBankIds.length) return true
+    return allowedBankIds.some((id, index) => id !== savedAllowedBankIds[index])
+  }, [allowedBankIds, savedAllowedBankIds, selectedDisplayChoice, savedSelectedDisplayChoice])
 
   const monthly = useMemo(() => calcMonthlyPayment(loanAmount, rate, loanYears), [loanAmount, rate, loanYears])
   const totalPaid = useMemo(() => monthly * loanYears * 12, [monthly, loanYears])
   const totalInterest = useMemo(() => Math.max(0, totalPaid - loanAmount), [totalPaid, loanAmount])
+
+  useEffect(() => {
+    if (!user) return
+    const nextNote = user.offersCarouselNote?.trim() || DEFAULT_OFFERS_CAROUSEL_NOTE
+    const nextVisible = user.offersCarouselNoteVisible ?? true
+    setOffersCarouselNote(nextNote)
+    setOffersCarouselNoteVisible(nextVisible)
+    setSavedOffersCarouselNote(nextNote)
+    setSavedOffersCarouselNoteVisible(nextVisible)
+  }, [user?.id])
 
   useEffect(() => {
     if (!user) return
@@ -307,13 +419,19 @@ export function LeadDetail() {
       .then((data) => {
         if (!isMounted) return
         const normalized = normalizeAllowedBankIds(data.allowed_bank_ids ?? [])
+        const parsedChoice = parseDisplayChoice(data.selected_display_choice)
         setAllowedBankIds(normalized)
-        setSelectedDisplayChoice(parseDisplayChoice(data.selected_display_choice))
+        setSavedAllowedBankIds(normalized)
+        setSelectedDisplayChoice(parsedChoice)
+        setSavedSelectedDisplayChoice(parsedChoice)
       })
       .catch(() => {
         if (!isMounted) return
-        setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
+        const fallbackAllowed = getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
+        setAllowedBankIds(fallbackAllowed)
+        setSavedAllowedBankIds(fallbackAllowed)
         setSelectedDisplayChoice(null)
+        setSavedSelectedDisplayChoice(null)
       })
       .finally(() => {
         if (isMounted) setBankVisibilityLoading(false)
@@ -326,15 +444,18 @@ export function LeadDetail() {
   useEffect(() => {
     if (!user) {
       setSelectedDisplayChoice(null)
+      setSavedSelectedDisplayChoice(null)
       return
     }
-    setAllowedBankIds(getDefaultAllowedBankIdsForMortgageType(user?.mortgageType))
+    const fallbackAllowed = getDefaultAllowedBankIdsForMortgageType(user?.mortgageType)
+    setAllowedBankIds(fallbackAllowed)
+    setSavedAllowedBankIds(fallbackAllowed)
   }, [user?.id, user?.mortgageType])
 
   useEffect(() => {
     if (typeof selectedDisplayChoice !== 'number') return
     if (allowedBankIds.includes(selectedDisplayChoice)) return
-    void handleDisplayChoice(null)
+    setSelectedDisplayChoice(null)
   }, [allowedBankIds, selectedDisplayChoice])
 
   useEffect(() => {
@@ -356,6 +477,11 @@ export function LeadDetail() {
       isMounted = false
     }
   }, [user?.id, updateUser])
+
+  useEffect(() => {
+    setSelectedTemplateId('')
+    setMessageDraft('')
+  }, [user?.id])
 
   const applyCustomerFilesData = (targetUserId: string, data: CustomerFileItem[]) => {
     const systemItems = data.filter((item) => item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX))
@@ -444,45 +570,73 @@ export function LeadDetail() {
     }
   }, [user?.id, updateUser])
 
-  const handleDisplayChoice = async (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
-    if (!user || bankVisibilitySaving) return
-    const previousChoice = selectedDisplayChoice
+  const handleDisplayChoice = (choice: number | typeof SELECTED_OFFER_CHOICE | null) => {
+    if (bankVisibilityLoading || bankVisibilitySaving) return
+    if (typeof choice === 'number' && !allowedBankIds.includes(choice)) return
     setSelectedDisplayChoice(choice)
-    setBankVisibilitySaving(true)
-    try {
-      const updated = await updateCustomerBankVisibility(user.id, allowedBankIds, choice)
-      setAllowedBankIds(normalizeAllowedBankIds(updated.allowed_bank_ids ?? []))
-      setSelectedDisplayChoice(parseDisplayChoice(updated.selected_display_choice))
-      toast.success('בחירת הבנק נשמרה')
-    } catch (error) {
-      setSelectedDisplayChoice(previousChoice)
-      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת הבנק הנבחר')
-    } finally {
-      setBankVisibilitySaving(false)
+  }
+
+  const toggleBankVisibility = (bankId: number) => {
+    if (bankVisibilityLoading || bankVisibilitySaving) return
+    const next = allowedBankIds.includes(bankId)
+      ? allowedBankIds.filter((id) => id !== bankId)
+      : [...allowedBankIds, bankId]
+    const ordered = normalizeAllowedBankIds(next)
+    setAllowedBankIds(ordered)
+    if (typeof selectedDisplayChoice === 'number' && !ordered.includes(selectedDisplayChoice)) {
+      setSelectedDisplayChoice(null)
     }
   }
 
-  const toggleBankVisibility = async (bankId: number) => {
-    if (!user || bankVisibilitySaving) return
-    const prev = allowedBankIds
-    const prevChoice = selectedDisplayChoice
-    const next = prev.includes(bankId) ? prev.filter((id) => id !== bankId) : [...prev, bankId]
-    const ordered = normalizeAllowedBankIds(next)
+  const saveBankVisibility = async () => {
+    if (!user || bankVisibilityLoading || bankVisibilitySaving || !hasUnsavedBankVisibilityChanges) return
+
+    const normalizedAllowed = normalizeAllowedBankIds(allowedBankIds)
     const nextChoice =
-      typeof selectedDisplayChoice === 'number' && !ordered.includes(selectedDisplayChoice)
+      typeof selectedDisplayChoice === 'number' && !normalizedAllowed.includes(selectedDisplayChoice)
         ? null
         : selectedDisplayChoice
-    setAllowedBankIds(ordered)
-    setSelectedDisplayChoice(nextChoice)
+
     setBankVisibilitySaving(true)
     try {
-      const updated = await updateCustomerBankVisibility(user.id, ordered, nextChoice)
-      setAllowedBankIds(normalizeAllowedBankIds(updated.allowed_bank_ids ?? []))
-      setSelectedDisplayChoice(parseDisplayChoice(updated.selected_display_choice))
+      const updated = await updateCustomerBankVisibility(user.id, normalizedAllowed, nextChoice)
+      const persistedAllowed = normalizeAllowedBankIds(updated.allowed_bank_ids ?? [])
+      const persistedChoice = parseDisplayChoice(updated.selected_display_choice)
+      setAllowedBankIds(persistedAllowed)
+      setSavedAllowedBankIds(persistedAllowed)
+      setSelectedDisplayChoice(persistedChoice)
+      setSavedSelectedDisplayChoice(persistedChoice)
+
+      const banksChanged =
+        persistedAllowed.length !== savedAllowedBankIds.length ||
+        persistedAllowed.some((id, index) => id !== savedAllowedBankIds[index])
+
+      if (banksChanged) {
+        try {
+          const bankLabels = getBankLabelsFromIds(persistedAllowed)
+          const bankTemplate = resolveBankVisibilityTemplate(templates, user.status)
+          const savedNotification = await createNotificationForUser(user.id, {
+            message: bankTemplate
+              ? buildTemplateMessage(bankTemplate.message, user.firstName, user.lastName, bankLabels)
+              : buildBankVisibilityNotificationMessage(persistedAllowed),
+            templateId: bankTemplate?.id,
+            templateName: bankTemplate?.name ?? BANK_VISIBILITY_NOTIFICATION_TITLE,
+          })
+          const mappedNotification = mapNotificationToSentMessage(savedNotification)
+          updateUser(user.id, {
+            sentMessages: [mappedNotification, ...(user.sentMessages || [])],
+          } as Partial<UserRecord>)
+        } catch (notificationError) {
+          const detail =
+            notificationError instanceof Error && notificationError.message
+              ? ` (${notificationError.message})`
+              : ''
+          toast.error(`הרשאות הבנקים עודכנו, אך שליחת ההודעה ללקוח נכשלה${detail}`)
+        }
+      }
+
       toast.success('הרשאות הבנקים עודכנו')
     } catch (error) {
-      setAllowedBankIds(prev)
-      setSelectedDisplayChoice(prevChoice)
       toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון הבנקים')
     } finally {
       setBankVisibilitySaving(false)
@@ -636,10 +790,33 @@ export function LeadDetail() {
       })
       const mapped = mapBankResponseItem(created)
       updateUser(user.id, { bankResponses: [mapped, ...user.bankResponses] } as Partial<UserRecord>)
+      const wasAlreadyApproved = user.status === 'אישור עקרוני'
       try {
         await updateCustomer(user.id, { status: 'אישור עקרוני' })
       } catch {
         // Error toast is handled in the store.
+      }
+      if (wasAlreadyApproved) {
+        const approvalTemplate = resolveTemplateByTrigger(templates, 'אישור עקרוני')
+        if (approvalTemplate) {
+          try {
+            const savedNotification = await createNotificationForUser(user.id, {
+              message: buildTemplateMessage(approvalTemplate.message, user.firstName, user.lastName),
+              templateId: approvalTemplate.id,
+              templateName: approvalTemplate.name,
+            })
+            const mappedNotification = mapNotificationToSentMessage(savedNotification)
+            updateUser(user.id, {
+              sentMessages: [mappedNotification, ...(user.sentMessages || [])],
+            } as Partial<UserRecord>)
+          } catch (notificationError) {
+            const detail =
+              notificationError instanceof Error && notificationError.message
+                ? ` (${notificationError.message})`
+                : ''
+            toast.error(`הקובץ הועלה, אך שליחת הודעת אישור עקרוני נכשלה${detail}`)
+          }
+        }
       }
       toast.success('הקובץ הועלה בהצלחה')
       setBankUploadOpen(false)
@@ -1861,9 +2038,19 @@ export function LeadDetail() {
                     הסרת סימון מסתירה את הבנק מרשימת ההצעות של הלקוח.
                   </p>
                 </div>
-                {bankVisibilitySaving && (
-                  <span className="text-xs text-[var(--color-text-muted)]">שומר...</span>
-                )}
+                <div className="flex flex-row-reverse items-center gap-2">
+                  {hasUnsavedBankVisibilityChanges && !bankVisibilitySaving ? (
+                    <span className="text-xs text-amber-700">יש שינויים שלא נשמרו</span>
+                  ) : null}
+                  <Button
+                    variant="accent"
+                    size="sm"
+                    onClick={() => void saveBankVisibility()}
+                    disabled={bankVisibilityLoading || bankVisibilitySaving || !hasUnsavedBankVisibilityChanges}
+                  >
+                    {bankVisibilitySaving ? 'שומר...' : 'שמור בנקים'}
+                  </Button>
+                </div>
               </div>
 
               <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--color-border-light)]">
@@ -1897,7 +2084,7 @@ export function LeadDetail() {
                           <td className="px-4 py-3 text-center">
                             <button
                               type="button"
-                              onClick={() => void toggleBankVisibility(bank.id)}
+                              onClick={() => toggleBankVisibility(bank.id)}
                               disabled={isBusy}
                               role="switch"
                               aria-checked={isVisible}
@@ -1917,7 +2104,7 @@ export function LeadDetail() {
                             <button
                               type="button"
                               onClick={() => {
-                                void handleDisplayChoice(isSelected ? null : bank.id)
+                                handleDisplayChoice(isSelected ? null : bank.id)
                               }}
                               disabled={!isVisible || isBusy}
                               className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
@@ -1942,10 +2129,11 @@ export function LeadDetail() {
                         <button
                           type="button"
                           onClick={() => {
-                            void handleDisplayChoice(
+                            handleDisplayChoice(
                               selectedDisplayChoice === SELECTED_OFFER_CHOICE ? null : SELECTED_OFFER_CHOICE
                             )
                           }}
+                          disabled={bankVisibilityLoading || bankVisibilitySaving}
                           className={`inline-flex min-w-[140px] items-center justify-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                             selectedDisplayChoice === SELECTED_OFFER_CHOICE
                               ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
@@ -1963,7 +2151,11 @@ export function LeadDetail() {
 
               <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  {bankVisibilityLoading ? 'טוען הרשאות בנקים...' : 'העדכון נשמר אוטומטית.'}
+                  {bankVisibilityLoading
+                    ? 'טוען הרשאות בנקים...'
+                    : hasUnsavedBankVisibilityChanges
+                      ? 'השינויים נשמרים רק אחרי לחיצה על "שמור בנקים".'
+                      : 'כל השינויים נשמרו.'}
                 </p>
                 <div className="flex flex-row-reverse items-center gap-2">
                   <span className="text-xs text-[var(--color-text-muted)]">בחירה נוכחית:</span>
@@ -1974,8 +2166,9 @@ export function LeadDetail() {
                     <button
                       type="button"
                       onClick={() => {
-                        void handleDisplayChoice(null)
+                        handleDisplayChoice(null)
                       }}
+                      disabled={bankVisibilityLoading || bankVisibilitySaving}
                       className="inline-flex h-8 items-center justify-center rounded-full border border-[var(--color-border)] bg-white px-3 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-border-light)]"
                     >
                       נקה בחירה
@@ -2323,72 +2516,141 @@ export function LeadDetail() {
         {/* Updates Tab */}
         <Tabs.Content value="updates" className="mt-4 sm:mt-5">
           <div className="space-y-4 sm:space-y-6">
-            {/* Send Update Section */}
-            <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
-              <div className="flex items-center gap-2 mb-4">
-                <MessageSquare size={20} className="text-[var(--color-primary)]" />
-                <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">שליחת עדכון ללקוח</h2>
-              </div>
-              
-              <div className="space-y-4">
-                <div className="text-right">
-                  <label className="text-sm font-medium text-[var(--color-text)]">בחירת תבנית</label>
-                  <div className="mt-2">
-                    <DropdownSelect<string>
-                      value={selectedTemplateId}
-                      onChange={setSelectedTemplateId}
-                      options={[
-                        { value: '', label: 'בחרו תבנית...' },
-                        ...templates.map((t) => ({ value: t.id, label: t.name })),
-                      ]}
-                      buttonClassName="w-full justify-between flex-row-reverse text-right"
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
+              {/* Send Update Section */}
+              <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <MessageSquare size={20} className="text-[var(--color-primary)]" />
+                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">שליחת עדכון ללקוח</h2>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="text-right">
+                    <label className="text-sm font-medium text-[var(--color-text)]">בחירת תבנית</label>
+                    <div className="mt-2">
+                      <DropdownSelect<string>
+                        value={selectedTemplateId}
+                        onChange={(nextTemplateId) => {
+                          setSelectedTemplateId(nextTemplateId)
+                          const nextTemplate = templates.find((t) => t.id === nextTemplateId)
+                          if (!nextTemplate) return
+                          setMessageDraft(buildTemplateMessage(nextTemplate.message, user.firstName, user.lastName))
+                        }}
+                        options={[
+                          { value: '', label: 'בחרו תבנית...' },
+                          ...templates.map((t) => ({ value: t.id, label: t.name })),
+                        ]}
+                        buttonClassName="w-full justify-between flex-row-reverse text-right"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <label className="text-sm font-medium text-[var(--color-text)]">
+                        הודעה מאת {currentAdmin.name}
+                      </label>
+                      {selectedTemplate && (
+                        <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+                          {selectedTemplate.trigger}
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      value={messageDraft}
+                      onChange={(event) => setMessageDraft(event.target.value)}
+                      rows={6}
+                      className="w-full rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 text-sm text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                      placeholder="כתבו כאן הודעה חופשית ללקוח..."
                     />
                   </div>
+
+                  <div className="flex justify-start">
+                    <Button
+                      variant="accent"
+                      disabled={!messageDraft.trim()}
+                      onClick={async () => {
+                        const payloadMessage = messageDraft.trim()
+                        if (!user || !payloadMessage) return
+                        try {
+                          const saved = await createNotificationForUser(user.id, {
+                            message: payloadMessage,
+                            templateId: selectedTemplate?.id,
+                            templateName: selectedTemplate?.name ?? freeMessageTitle,
+                          })
+                          const newMessage: SentMessage = mapNotificationToSentMessage(saved)
+                          updateUser(user.id, {
+                            sentMessages: [newMessage, ...(user.sentMessages || [])],
+                          } as Partial<UserRecord>)
+                          setSelectedTemplateId('')
+                          setMessageDraft('')
+                          toast.success('ההודעה נשלחה בהצלחה')
+                        } catch (error) {
+                          toast.error(error instanceof Error ? error.message : 'שגיאה בשליחת הודעה')
+                        }
+                      }}
+                    >
+                      <AnimatedIcon icon={Send} size={18} variant="lift" />
+                      שלח עדכון
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Offers Carousel Note Section */}
+              <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <MessageSquare size={20} className="text-[var(--color-primary)]" />
+                  <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">הערה לקרוסלת הצעות</h2>
                 </div>
 
-                {selectedTemplate && (
-                  <div className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
-                        {selectedTemplate.trigger}
-                      </span>
-                    </div>
-                    <p className="text-sm text-[var(--color-text)] whitespace-pre-wrap">
-                      {selectedTemplate.message.replace('{שם}', `${user.firstName} ${user.lastName}`)}
-                    </p>
+                <div className="space-y-4">
+                  <div className="text-right">
+                    <label className="text-sm font-medium text-[var(--color-text)]">תוכן ההערה</label>
+                    <textarea
+                      value={offersCarouselNote}
+                      onChange={(event) => setOffersCarouselNote(event.target.value)}
+                      rows={6}
+                      className="mt-2 w-full rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 text-sm text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                      placeholder={DEFAULT_OFFERS_CAROUSEL_NOTE}
+                    />
                   </div>
-                )}
 
-                <div className="flex justify-start">
-                  <Button
-                    variant="accent"
-                    disabled={!selectedTemplateId}
-                    onClick={async () => {
-                      if (!user || !selectedTemplate) return
-                      try {
-                        const payloadMessage = selectedTemplate.message.replace(
-                          '{שם}',
-                          `${user.firstName} ${user.lastName}`
-                        )
-                        const saved = await createNotificationForUser(user.id, {
-                          message: payloadMessage,
-                          templateId: selectedTemplate.id,
-                          templateName: selectedTemplate.name,
-                        })
-                        const newMessage: SentMessage = mapNotificationToSentMessage(saved)
-                        updateUser(user.id, {
-                          sentMessages: [newMessage, ...(user.sentMessages || [])],
-                        } as Partial<UserRecord>)
-                        setSelectedTemplateId('')
-                        toast.success('ההודעה נשלחה בהצלחה')
-                      } catch (error) {
-                        toast.error(error instanceof Error ? error.message : 'שגיאה בשליחת הודעה')
-                      }
-                    }}
-                  >
-                    <AnimatedIcon icon={Send} size={18} variant="lift" />
-                    שלח עדכון
-                  </Button>
+                  <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={offersCarouselNoteVisible}
+                      onChange={(event) => setOffersCarouselNoteVisible(event.target.checked)}
+                      className="h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/30"
+                    />
+                    <span>להציג ללקוח</span>
+                  </label>
+
+                  <div className="flex justify-start">
+                    <Button
+                      variant="accent"
+                      disabled={offersCarouselSaving || !hasUnsavedOffersCarouselSettings}
+                      onClick={async () => {
+                        if (!user) return
+                        try {
+                          setOffersCarouselSaving(true)
+                          await updateCustomer(user.id, {
+                            offers_carousel_note: normalizedOffersCarouselNote,
+                            offers_carousel_note_visible: offersCarouselNoteVisible,
+                          })
+                          setOffersCarouselNote(normalizedOffersCarouselNote)
+                          setSavedOffersCarouselNote(normalizedOffersCarouselNote)
+                          setSavedOffersCarouselNoteVisible(offersCarouselNoteVisible)
+                        } catch {
+                          // Error toast is handled in the store.
+                        } finally {
+                          setOffersCarouselSaving(false)
+                        }
+                      }}
+                    >
+                      {offersCarouselSaving ? 'שומר...' : 'שמור הגדרה'}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2895,7 +3157,9 @@ export function LeadDetail() {
                 type="text"
                 inputMode="numeric"
                 value={bankUploadForm.amount}
-                onChange={(e) => setBankUploadForm((p) => ({ ...p, amount: e.target.value }))}
+                onChange={(e) =>
+                  setBankUploadForm((p) => ({ ...p, amount: formatAmountWithCommas(e.target.value) }))
+                }
                 placeholder="לדוגמה: 1,250,000"
                 className="mt-2 w-full h-11 rounded-full border border-[var(--color-border)] bg-white px-4 text-sm outline-none"
               />

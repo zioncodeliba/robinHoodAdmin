@@ -1,68 +1,100 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
-import type { MessageTemplate, LeadStatus } from '@/types'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { toast } from 'sonner'
+import type { MessageTemplate, MessageTemplateTrigger } from '@/types'
+import {
+  createMessageTemplate,
+  deleteMessageTemplate,
+  fetchMessageTemplates,
+  updateMessageTemplate,
+  type MessageTemplateCreateInput,
+  type MessageTemplateItem,
+  type MessageTemplateUpdateInput,
+} from '@/lib/message-templates-api'
 
 type NewTemplateInput = {
   name: string
-  trigger: LeadStatus
+  trigger: MessageTemplateTrigger
   message: string
 }
 
 interface MessagesContextType {
   templates: MessageTemplate[]
-  addTemplate: (input: NewTemplateInput) => void
-  updateTemplate: (id: string, updates: Partial<MessageTemplate>) => void
-  deleteTemplate: (id: string) => void
+  loading: boolean
+  refreshTemplates: () => Promise<void>
+  addTemplate: (input: NewTemplateInput) => Promise<MessageTemplate>
+  updateTemplate: (id: string, updates: Partial<MessageTemplate>) => Promise<MessageTemplate>
+  deleteTemplate: (id: string) => Promise<void>
 }
 
 const MessagesContext = createContext<MessagesContextType | undefined>(undefined)
 
-// Initial mock templates
-const initialTemplates: MessageTemplate[] = [
-  {
-    id: 'tpl-1',
-    name: 'אישור עקרוני התקבל',
-    trigger: 'אישור עקרוני',
-    message: 'שלום {שם}, קיבלנו אישור עקרוני עבורך! נציג יצור איתך קשר בהקדם להמשך התהליך.',
-    createdAt: '2025-01-01',
-  },
-  {
-    id: 'tpl-2',
-    name: 'זימון לשיחת תמהיל',
-    trigger: 'שיחת תמהיל',
-    message: 'שלום {שם}, אנחנו מזמינים אותך לשיחת תמהיל לקביעת פרטי המשכנתא. אנא צור קשר לתיאום מועד.',
-    createdAt: '2025-01-02',
-  },
-  {
-    id: 'tpl-3',
-    name: 'הודעה על חתימות',
-    trigger: 'חתימות',
-    message: 'שלום {שם}, המסמכים מוכנים לחתימה! אנא התקשר אלינו לתיאום מועד לחתימה על המסמכים.',
-    createdAt: '2025-01-03',
-  },
-]
+const mapTemplate = (item: MessageTemplateItem): MessageTemplate => ({
+  id: item.id,
+  name: item.name,
+  trigger: item.trigger,
+  message: item.message,
+  createdAt: item.created_at,
+})
+
+const toCreatePayload = (input: NewTemplateInput): MessageTemplateCreateInput => ({
+  name: input.name.trim(),
+  trigger: input.trigger,
+  message: input.message.trim(),
+})
+
+const toUpdatePayload = (updates: Partial<MessageTemplate>): MessageTemplateUpdateInput => {
+  const payload: MessageTemplateUpdateInput = {}
+  if (updates.name !== undefined) payload.name = updates.name.trim()
+  if (updates.trigger !== undefined) payload.trigger = updates.trigger
+  if (updates.message !== undefined) payload.message = updates.message.trim()
+  return payload
+}
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
-  const [templates, setTemplates] = useState<MessageTemplate[]>(initialTemplates)
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const addTemplate = useCallback((input: NewTemplateInput) => {
-    const now = new Date()
-    const createdAt = now.toISOString().slice(0, 10)
-    const id = `tpl-${Date.now()}`
-    const next: MessageTemplate = {
-      id,
-      name: input.name,
-      trigger: input.trigger,
-      message: input.message,
-      createdAt,
+  const refreshTemplates = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchMessageTemplates()
+      setTemplates(data.map(mapTemplate))
+    } catch (error) {
+      setTemplates([])
+      toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת תבניות הודעות')
+    } finally {
+      setLoading(false)
     }
-    setTemplates((prev) => [next, ...prev])
   }, [])
 
-  const updateTemplate = useCallback((id: string, updates: Partial<MessageTemplate>) => {
-    setTemplates((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)))
+  useEffect(() => {
+    void refreshTemplates()
+  }, [refreshTemplates])
+
+  const addTemplate = useCallback(async (input: NewTemplateInput) => {
+    const created = await createMessageTemplate(toCreatePayload(input))
+    const mapped = mapTemplate(created)
+    setTemplates((prev) => [mapped, ...prev])
+    return mapped
   }, [])
 
-  const deleteTemplate = useCallback((id: string) => {
+  const updateTemplateById = useCallback(async (id: string, updates: Partial<MessageTemplate>) => {
+    const payload = toUpdatePayload(updates)
+    if (Object.keys(payload).length === 0) {
+      const existing = templates.find((t) => t.id === id)
+      if (!existing) {
+        throw new Error('Message template not found')
+      }
+      return existing
+    }
+    const updated = await updateMessageTemplate(id, payload)
+    const mapped = mapTemplate(updated)
+    setTemplates((prev) => prev.map((t) => (t.id === id ? mapped : t)))
+    return mapped
+  }, [templates])
+
+  const deleteTemplateById = useCallback(async (id: string) => {
+    await deleteMessageTemplate(id)
     setTemplates((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
@@ -70,9 +102,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     <MessagesContext.Provider
       value={{
         templates,
+        loading,
+        refreshTemplates,
         addTemplate,
-        updateTemplate,
-        deleteTemplate,
+        updateTemplate: updateTemplateById,
+        deleteTemplate: deleteTemplateById,
       }}
     >
       {children}

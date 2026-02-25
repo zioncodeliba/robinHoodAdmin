@@ -34,6 +34,8 @@ const leadStatusOptions: LeadStatus[] = [
 ]
 
 const mortgageTypeOptions: MortgageType[] = ['-', 'משכנתא חדשה', 'מחזור משכנתא']
+const DEFAULT_OFFERS_CAROUSEL_NOTE =
+  'נשלח בקשה לאישור עקרוני לכלל הבנקים כשיתקבלו האישורים ישלח עדכון.'
 
 const mapStatus = (value: string): LeadStatus => {
   const trimmed = value?.trim?.() ?? ''
@@ -50,6 +52,8 @@ const mapMortgageType = (value: string): MortgageType => {
 const mapCustomer = (item: CustomerItem): UserRecord => {
   const createdAt = item.created_at ?? new Date().toISOString()
   const lastActivityAt = item.last_activity_at ?? createdAt
+  const offersCarouselNote = item.offers_carousel_note?.trim() || DEFAULT_OFFERS_CAROUSEL_NOTE
+  const offersCarouselNoteVisible = item.offers_carousel_note_visible ?? true
   return {
     id: item.id,
     firstName: item.first_name,
@@ -77,6 +81,8 @@ const mapCustomer = (item: CustomerItem): UserRecord => {
     simulatorOffers: [],
     payments: [],
     sentMessages: [],
+    offersCarouselNote,
+    offersCarouselNoteVisible,
   }
 }
 
@@ -137,6 +143,8 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
               email: mapped.email,
               status: mapped.status,
               mortgageType: mapped.mortgageType,
+              offersCarouselNote: mapped.offersCarouselNote,
+              offersCarouselNoteVisible: mapped.offersCarouselNoteVisible,
               createdAt: mapped.createdAt,
               lastActivityAt: mapped.lastActivityAt,
             }

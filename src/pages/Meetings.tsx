@@ -9,9 +9,11 @@ import { DropdownSelect } from '@/components/ui/dropdown-select'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { fetchMeetingAvailability, updateMeetingAvailability, type AvailabilityDay, type DateException, type TimeRange } from '@/lib/meeting-availability-api'
 import { useUsers } from '@/lib/users-store'
+import { useMessages } from '@/lib/messages-store'
+import { createNotificationForUser, type NotificationItem } from '@/lib/notifications-api'
 import { formatShortDate } from '@/lib/utils'
 import { createMeeting as createMeetingRequest, deleteMeeting, fetchMeetings, type MeetingItem } from '@/lib/meetings-api'
-import type { CalendarView, Meeting, MeetingStatus } from '@/types'
+import type { CalendarView, Meeting, MeetingStatus, MessageTemplateTrigger, SentMessage } from '@/types'
 
 // Israeli holidays for 2024-2025 (Hebrew calendar dates converted)
 const israeliHolidays: { date: string; name: string }[] = [
@@ -143,8 +145,52 @@ const buildDefaultAvailability = (): AvailabilityDay[] =>
     ranges: [{ start: '09:00', end: '17:00' }],
   }))
 
+const ADMIN_MEETING_TEMPLATE_TRIGGER: MessageTemplateTrigger = 'אדמין - קביעת פגישה'
+
+const mapNotificationToSentMessage = (item: NotificationItem): SentMessage => ({
+  id: item.id,
+  templateId: item.template_id ?? '',
+  templateName: item.template_name ?? 'עדכון',
+  message: item.message,
+  sentAt: item.sent_at,
+  readAt: item.read_at ?? undefined,
+})
+
+const buildMeetingDetailsText = (startIso: string, endIso: string, notes?: string) => {
+  const start = new Date(startIso)
+  const end = new Date(endIso)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return `יום: —\nתאריך: —\nשעה: —\nהערות: ${notes?.trim() || 'ללא הערות'}`
+  }
+
+  const dayLabel = start.toLocaleDateString('he-IL', { weekday: 'long' })
+  const dateLabel = start.toLocaleDateString('he-IL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+  const startTime = start.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  const endTime = end.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  const notesLabel = notes?.trim() ? notes.trim() : 'ללא הערות'
+
+  return `יום: ${dayLabel}\nתאריך: ${dateLabel}\nשעה: ${startTime} - ${endTime}\nהערות: ${notesLabel}`
+}
+
+const buildTemplateMessage = (
+  templateMessage: string,
+  firstName: string,
+  lastName: string,
+  meetingDetailsText: string
+) =>
+  templateMessage
+    .replace(/\{שם\}/g, `${firstName} ${lastName}`.trim())
+    .replace(/\{פרטי פגישה\}/g, meetingDetailsText)
+    .replace(/\{פרטי_פגישה\}/g, meetingDetailsText)
+
 export function Meetings() {
-  const { users } = useUsers()
+  const { users, updateUser } = useUsers()
+  const { templates } = useMessages()
 
   const [view, setView] = useState<CalendarView>('week')
   const [anchorDate, setAnchorDate] = useState(() => new Date())
@@ -488,6 +534,34 @@ export function Meetings() {
         notes: form.notes.trim() || null,
       })
       setMeetingItems((prev) => [created, ...prev])
+      const meetingTemplate = templates.find((template) => template.trigger === ADMIN_MEETING_TEMPLATE_TRIGGER)
+      if (meetingTemplate) {
+        try {
+          const meetingDetailsText = buildMeetingDetailsText(start, end, form.notes)
+          const savedNotification = await createNotificationForUser(selectedUser.id, {
+            message: buildTemplateMessage(
+              meetingTemplate.message,
+              selectedUser.firstName,
+              selectedUser.lastName,
+              meetingDetailsText
+            ),
+            templateId: meetingTemplate.id,
+            templateName: meetingTemplate.name,
+          })
+          const mappedNotification = mapNotificationToSentMessage(savedNotification)
+          updateUser(selectedUser.id, {
+            sentMessages: [mappedNotification, ...(selectedUser.sentMessages || [])],
+          })
+        } catch (notificationError) {
+          const detail =
+            notificationError instanceof Error && notificationError.message
+              ? ` (${notificationError.message})`
+              : ''
+          toast.error(`הפגישה נוספה, אך שליחת הודעת תבנית נכשלה${detail}`)
+        }
+      } else {
+        toast.warning('הפגישה נוספה, אך לא נמצאה תבנית עם טריגר "אדמין - קביעת פגישה"')
+      }
       toast.success('הפגישה נוספה')
       setNewOpen(false)
     } catch (error) {

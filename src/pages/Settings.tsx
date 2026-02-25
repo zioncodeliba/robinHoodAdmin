@@ -16,9 +16,9 @@ import { clearAuth, updateStoredUser } from '@/lib/auth-storage'
 import { formatShortDate } from '@/lib/utils'
 import { useMessages } from '@/lib/messages-store'
 import type { Gender } from '@/lib/auth-api'
-import type { LeadStatus, MessageTemplate } from '@/types'
+import type { MessageTemplate, MessageTemplateTrigger } from '@/types'
 
-const leadStatusOptions: { value: LeadStatus; label: string }[] = [
+const templateTriggerOptions: { value: MessageTemplateTrigger; label: string }[] = [
   { value: 'נרשם', label: 'נרשם' },
   { value: 'שיחה עם הצ׳אט', label: 'שיחה עם הצ׳אט' },
   { value: 'חוסר התאמה', label: 'חוסר התאמה' },
@@ -34,6 +34,7 @@ const leadStatusOptions: { value: LeadStatus; label: string }[] = [
   { value: 'מחזור - יש הצעה', label: 'מחזור - יש הצעה' },
   { value: 'מחזור - נקבעה פגישה', label: 'מחזור - נקבעה פגישה' },
   { value: 'מחזור - ניטור', label: 'מחזור - ניטור' },
+  { value: 'אדמין - קביעת פגישה', label: 'אדמין - קביעת פגישה' },
 ]
 
 const genderOptions: { value: Gender; label: string }[] = [
@@ -110,7 +111,7 @@ export function Settings() {
   const [addTemplateOpen, setAddTemplateOpen] = useState(false)
   const [addTemplateForm, setAddTemplateForm] = useState({
     name: '',
-    trigger: 'אישור עקרוני' as LeadStatus,
+    trigger: 'אישור עקרוני' as MessageTemplateTrigger,
     message: '',
   })
   const [editTemplateOpen, setEditTemplateOpen] = useState(false)
@@ -259,7 +260,7 @@ export function Settings() {
     }
   }
 
-  const handleAddTemplate = () => {
+  const handleAddTemplate = async () => {
     if (!addTemplateForm.name.trim()) {
       toast.error('הזינו שם לתבנית')
       return
@@ -268,17 +269,21 @@ export function Settings() {
       toast.error('הזינו תוכן הודעה')
       return
     }
-    addTemplate({
-      name: addTemplateForm.name.trim(),
-      trigger: addTemplateForm.trigger,
-      message: addTemplateForm.message.trim(),
-    })
-    toast.success('התבנית נוספה בהצלחה')
-    setAddTemplateOpen(false)
-    setAddTemplateForm({ name: '', trigger: 'אישור עקרוני', message: '' })
+    try {
+      await addTemplate({
+        name: addTemplateForm.name.trim(),
+        trigger: addTemplateForm.trigger,
+        message: addTemplateForm.message.trim(),
+      })
+      toast.success('התבנית נוספה בהצלחה')
+      setAddTemplateOpen(false)
+      setAddTemplateForm({ name: '', trigger: 'אישור עקרוני', message: '' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בהוספת תבנית')
+    }
   }
 
-  const handleEditTemplate = () => {
+  const handleEditTemplate = async () => {
     if (!editingTemplate) return
     if (!editingTemplate.name.trim()) {
       toast.error('הזינו שם לתבנית')
@@ -288,19 +293,27 @@ export function Settings() {
       toast.error('הזינו תוכן הודעה')
       return
     }
-    updateTemplate(editingTemplate.id, {
-      name: editingTemplate.name.trim(),
-      trigger: editingTemplate.trigger,
-      message: editingTemplate.message.trim(),
-    })
-    toast.success('התבנית עודכנה בהצלחה')
-    setEditTemplateOpen(false)
-    setEditingTemplate(null)
+    try {
+      await updateTemplate(editingTemplate.id, {
+        name: editingTemplate.name.trim(),
+        trigger: editingTemplate.trigger,
+        message: editingTemplate.message.trim(),
+      })
+      toast.success('התבנית עודכנה בהצלחה')
+      setEditTemplateOpen(false)
+      setEditingTemplate(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בעדכון תבנית')
+    }
   }
 
-  const handleDeleteTemplate = (templateId: string) => {
-    deleteTemplate(templateId)
-    toast.success('התבנית נמחקה')
+  const handleDeleteTemplate = async (templateId: string) => {
+    try {
+      await deleteTemplate(templateId)
+      toast.success('התבנית נמחקה')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת תבנית')
+    }
   }
 
   const openEditTemplate = (template: MessageTemplate) => {
@@ -738,10 +751,10 @@ export function Settings() {
             <div className="text-right">
               <label className="text-sm font-medium text-[var(--color-text)]">טריגר (שלב בתהליך)</label>
               <div className="mt-2">
-                <DropdownSelect<LeadStatus>
+                <DropdownSelect<MessageTemplateTrigger>
                   value={addTemplateForm.trigger}
                   onChange={(v) => setAddTemplateForm((p) => ({ ...p, trigger: v }))}
-                  options={leadStatusOptions}
+                  options={templateTriggerOptions}
                   buttonClassName="w-full justify-between"
                 />
               </div>
@@ -755,7 +768,9 @@ export function Settings() {
                 value={addTemplateForm.message}
                 onChange={(e) => setAddTemplateForm((p) => ({ ...p, message: e.target.value }))}
               />
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">טיפ: השתמשו ב-{'{שם}'} להוספת שם הלקוח בהודעה.</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                טיפ: השתמשו ב-{'{שם}'} לשם הלקוח, ב-{'{בנקים}'} לרשימת בנקים, וב-{'{פרטי פגישה}'} לפירוט פגישה.
+              </p>
             </div>
           </div>
 
@@ -790,10 +805,10 @@ export function Settings() {
               <div className="text-right">
                 <label className="text-sm font-medium text-[var(--color-text)]">טריגר (שלב בתהליך)</label>
                 <div className="mt-2">
-                  <DropdownSelect<LeadStatus>
+                  <DropdownSelect<MessageTemplateTrigger>
                     value={editingTemplate.trigger}
                     onChange={(v) => setEditingTemplate((p) => p ? { ...p, trigger: v } : null)}
-                    options={leadStatusOptions}
+                    options={templateTriggerOptions}
                     buttonClassName="w-full justify-between"
                   />
                 </div>
@@ -806,7 +821,9 @@ export function Settings() {
                   value={editingTemplate.message}
                   onChange={(e) => setEditingTemplate((p) => p ? { ...p, message: e.target.value } : null)}
                 />
-                <p className="mt-1 text-xs text-[var(--color-text-muted)]">טיפ: השתמשו ב-{'{שם}'} להוספת שם הלקוח בהודעה.</p>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  טיפ: השתמשו ב-{'{שם}'} לשם הלקוח, ב-{'{בנקים}'} לרשימת בנקים, וב-{'{פרטי פגישה}'} לפירוט פגישה.
+                </p>
               </div>
             </div>
           )}

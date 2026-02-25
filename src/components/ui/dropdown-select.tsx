@@ -51,7 +51,13 @@ export function DropdownSelect<T extends string>({
         </button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align={contentAlign} className={cn('min-w-[220px]', className)}>
+      <DropdownMenuContent
+        align={contentAlign}
+        className={cn(
+          'min-w-[220px] max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto overscroll-contain',
+          className
+        )}
+      >
         <div dir="rtl">
           <DropdownMenuHighlight>
             {options.map((o) => (
@@ -76,5 +82,3 @@ export function DropdownSelect<T extends string>({
     </DropdownMenu>
   )
 }
-
-

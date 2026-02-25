@@ -129,6 +129,8 @@ export interface UserRecord extends Lead {
   simulatorOffers: SimulatorOfferRow[]
   payments: ClientPayment[]
   sentMessages: SentMessage[]
+  offersCarouselNote?: string
+  offersCarouselNoteVisible?: boolean
 }
 
 export interface Admin {
@@ -229,11 +231,13 @@ export interface ChartDataPoint {
   value: number
 }
 
+export type MessageTemplateTrigger = LeadStatus | 'אדמין - קביעת פגישה'
+
 // תבנית הודעה
 export type MessageTemplate = {
   id: string
   name: string
-  trigger: LeadStatus
+  trigger: MessageTemplateTrigger
   message: string
   createdAt: string
 }
