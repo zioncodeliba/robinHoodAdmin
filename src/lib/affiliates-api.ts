@@ -53,6 +53,45 @@ export type AffiliateDeleteResponse = {
   deleted: boolean
 }
 
+export type AffiliateTrafficCounters = {
+  total_clicks: number
+  unique_visitors: number
+  identified_clicks: number
+  anonymous_clicks: number
+  clicks_this_month: number
+  clicks_today: number
+  registered_customers: number
+}
+
+export type AffiliateTrafficMonthlyPoint = {
+  month: string
+  clicks: number
+  identified_clicks: number
+  unique_visitors: number
+}
+
+export type AffiliateTrafficEvent = {
+  id: string
+  clicked_at: string
+  user_id?: string | null
+  user_name?: string | null
+  user_phone?: string | null
+  user_email?: string | null
+  visitor_id?: string | null
+  landing_path?: string | null
+  referrer?: string | null
+  ip_address?: string | null
+  user_agent?: string | null
+}
+
+export type AffiliateTrafficResponse = {
+  affiliate_id: string
+  affiliate_code: string
+  counters: AffiliateTrafficCounters
+  monthly: AffiliateTrafficMonthlyPoint[]
+  events: AffiliateTrafficEvent[]
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
 const AUTH_BASE = `${API_BASE}/auth/v1`
 
@@ -136,4 +175,8 @@ export async function deleteAffiliate(affiliateId: string): Promise<AffiliateDel
   return request<AffiliateDeleteResponse>(`/affiliates/${affiliateId}`, {
     method: 'DELETE',
   })
+}
+
+export async function fetchAffiliateTraffic(affiliateId: string): Promise<AffiliateTrafficResponse> {
+  return request<AffiliateTrafficResponse>(`/affiliates/${affiliateId}/traffic`)
 }

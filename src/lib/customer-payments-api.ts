@@ -1,43 +1,22 @@
-import type { LeadStatus } from '@/types'
 import { forceLogout, getStoredAuth } from '@/lib/auth-storage'
 
-export type CustomerCreateInput = {
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
-  status: LeadStatus
-  mortgage_type: string
-  gender: 'male' | 'female'
-}
-
-export type CustomerUpdateInput = Partial<Omit<CustomerCreateInput, 'gender'>> & {
-  gender?: never
-  affiliate_id?: string | null
-  offers_carousel_note?: string
-  offers_carousel_note_visible?: boolean
-}
-
-export type CustomerItem = {
+export type CustomerPaymentItem = {
   id: string
-  first_name: string
-  last_name: string
-  mail: string
-  phone: string
+  user_id: string
+  amount: number
   affiliate_id?: string | null
   affiliate_name?: string | null
-  status: LeadStatus
-  mortgage_type: string
-  offers_carousel_note?: string
-  offers_carousel_note_visible?: boolean
+  reference?: string | null
+  note?: string | null
   created_at: string
-  last_activity_at: string
 }
 
-export type CustomerDeleteResponse = {
-  message: string
-  id: string
-  deleted: boolean
+export type CustomerPaymentCreateInput = {
+  amount: number
+  affiliateId?: string
+  affiliateName?: string
+  reference?: string
+  note?: string
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -98,30 +77,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload
 }
 
-export async function fetchCustomers(): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>('/customers')
+export async function fetchCustomerPaymentsByUser(userId: string): Promise<CustomerPaymentItem[]> {
+  return request<CustomerPaymentItem[]>(`/customer-payments/by-user/${userId}`)
 }
 
-export async function fetchAffiliateCustomers(affiliateId: string): Promise<CustomerItem[]> {
-  return request<CustomerItem[]>(`/affiliates/${affiliateId}/customers`)
-}
-
-export async function createCustomer(payload: CustomerCreateInput): Promise<CustomerItem> {
-  return request<CustomerItem>('/customers', {
+export async function createCustomerPaymentForUser(
+  userId: string,
+  payload: CustomerPaymentCreateInput
+): Promise<CustomerPaymentItem> {
+  return request<CustomerPaymentItem>(`/customer-payments/by-user/${userId}`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      amount: payload.amount,
+      affiliate_id: payload.affiliateId,
+      affiliate_name: payload.affiliateName,
+      reference: payload.reference,
+      note: payload.note,
+    }),
   })
 }
 
-export async function updateCustomer(userId: string, payload: CustomerUpdateInput): Promise<CustomerItem> {
-  return request<CustomerItem>(`/customers/${userId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteCustomer(userId: string): Promise<CustomerDeleteResponse> {
-  return request<CustomerDeleteResponse>(`/customers/${userId}`, {
+export async function deleteCustomerPayment(paymentId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/customer-payments/${paymentId}`, {
     method: 'DELETE',
   })
 }

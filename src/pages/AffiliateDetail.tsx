@@ -19,6 +19,12 @@ import { Input } from '@/components/ui/input'
 import { AnimatedIcon } from '@/components/ui/animated-icon'
 import { formatShortDate } from '@/lib/utils'
 import { useAffiliateById, useAffiliates } from '@/lib/affiliates-store'
+import {
+  fetchAffiliateTraffic,
+  type AffiliateTrafficCounters,
+  type AffiliateTrafficEvent,
+  type AffiliateTrafficMonthlyPoint,
+} from '@/lib/affiliates-api'
 import { fetchAffiliateCustomers, type CustomerItem } from '@/lib/customers-api'
 
 function formatCurrencyILS(value: number) {
@@ -31,6 +37,33 @@ function calcEarnings(conversions: number) {
 
 function calcPaid(payments: Array<{ amount: number }>) {
   return payments.reduce((sum, p) => sum + p.amount, 0)
+}
+
+const FRONT_BASE = (import.meta.env.VITE_FRONT_BASE ?? 'http://localhost:3001').replace(/\/$/, '')
+const EMPTY_TRAFFIC_COUNTERS: AffiliateTrafficCounters = {
+  total_clicks: 0,
+  unique_visitors: 0,
+  identified_clicks: 0,
+  anonymous_clicks: 0,
+  clicks_this_month: 0,
+  clicks_today: 0,
+  registered_customers: 0,
+}
+
+function formatDateTime(value: string) {
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return `${d.toLocaleDateString('he-IL')} ${d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`
+}
+
+function formatCounter(value: number) {
+  return new Intl.NumberFormat('he-IL').format(value)
+}
+
+function formatMonthLabel(monthKey: string) {
+  const [year, month] = monthKey.split('-')
+  if (!year || !month) return monthKey
+  return `${month}/${year.slice(-2)}`
 }
 
 function InfoTile({ label, value }: { label: string; value: React.ReactNode }) {
@@ -62,6 +95,11 @@ export function AffiliateDetail() {
   const [affiliateCustomers, setAffiliateCustomers] = useState<CustomerItem[]>([])
   const [customersLoading, setCustomersLoading] = useState(false)
   const [customersError, setCustomersError] = useState<string | null>(null)
+  const [trafficCounters, setTrafficCounters] = useState<AffiliateTrafficCounters>(EMPTY_TRAFFIC_COUNTERS)
+  const [trafficMonthly, setTrafficMonthly] = useState<AffiliateTrafficMonthlyPoint[]>([])
+  const [trafficEvents, setTrafficEvents] = useState<AffiliateTrafficEvent[]>([])
+  const [trafficLoading, setTrafficLoading] = useState(false)
+  const [trafficError, setTrafficError] = useState<string | null>(null)
 
   const [editForm, setEditForm] = useState({
     name: '',
@@ -84,6 +122,14 @@ export function AffiliateDetail() {
     const due = Math.max(0, earnings - paid)
     return { earnings, paid, due }
   }, [affiliate])
+
+  const trafficChartData = useMemo(() => {
+    return trafficMonthly.map((item) => ({
+      month: formatMonthLabel(item.month),
+      clicks: item.clicks,
+      identified_clicks: item.identified_clicks,
+    }))
+  }, [trafficMonthly])
 
   useEffect(() => {
     if (!affiliate?.id) return
@@ -110,6 +156,37 @@ export function AffiliateDetail() {
     }
   }, [affiliate?.id])
 
+  useEffect(() => {
+    if (!affiliate?.id) return
+    let isMounted = true
+    setTrafficLoading(true)
+    setTrafficError(null)
+
+    fetchAffiliateTraffic(affiliate.id)
+      .then((response) => {
+        if (!isMounted) return
+        setTrafficCounters(response.counters)
+        setTrafficMonthly(response.monthly)
+        setTrafficEvents(response.events)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        const message = error instanceof Error ? error.message : 'שגיאה בטעינת נתוני טראפיק'
+        setTrafficError(message)
+        setTrafficCounters(EMPTY_TRAFFIC_COUNTERS)
+        setTrafficMonthly([])
+        setTrafficEvents([])
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setTrafficLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [affiliate?.id])
+
   if (!affiliate) {
     return (
       <div className="space-y-4" dir="rtl">
@@ -126,6 +203,8 @@ export function AffiliateDetail() {
       </div>
     )
   }
+
+  const affiliateFullLink = `${FRONT_BASE}/r/${encodeURIComponent(affiliate.code)}`
 
   const openEdit = () => {
     setEditForm({
@@ -301,12 +380,25 @@ export function AffiliateDetail() {
           <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">פרטים אישיים</h2>
           <div className="mt-4 sm:mt-5 grid grid-cols-2 gap-2 sm:gap-4">
             <InfoTile label="שם" value={affiliate.name} />
+            <InfoTile
+              label="לינק מלא"
+              value={
+                <a
+                  href={affiliateFullLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  dir="ltr"
+                  className="text-[var(--color-primary)] hover:underline"
+                  title={affiliateFullLink}
+                >
+                  {affiliateFullLink}
+                </a>
+              }
+            />
             <InfoTile label="קוד" value={<span dir="ltr">{affiliate.code}</span>} />
             <InfoTile label="טלפון" value={affiliate.phone ? <span dir="ltr">{affiliate.phone}</span> : '—'} />
             <InfoTile label="אימייל" value={affiliate.email ? <span dir="ltr">{affiliate.email}</span> : '—'} />
-            <div className="col-span-2">
-              <InfoTile label="כתובת" value={affiliate.address ?? '—'} />
-            </div>
+            <InfoTile label="כתובת" value={affiliate.address ?? '—'} />
           </div>
         </div>
 
@@ -323,38 +415,171 @@ export function AffiliateDetail() {
         </div>
       </div>
 
-      {/* Traffic chart */}
+      {/* Traffic analytics */}
       <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
         <div className="flex items-end justify-between gap-3" dir="rtl">
           <div className="text-right">
             <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">תנועת טראפיק לפי חודש</h2>
-            <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">קליקים והמרות (דמו)</p>
+            <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">קליקים, זיהוי משתמשים ופירוט כניסות.</p>
           </div>
         </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+          <InfoTile label="סה״כ קליקים" value={formatCounter(trafficCounters.total_clicks)} />
+          <InfoTile label="מבקרים ייחודיים" value={formatCounter(trafficCounters.unique_visitors)} />
+          <InfoTile label="כניסות מזוהות" value={formatCounter(trafficCounters.identified_clicks)} />
+          <InfoTile label="אנונימיים" value={formatCounter(trafficCounters.anonymous_clicks)} />
+          <InfoTile label="קליקים החודש" value={formatCounter(trafficCounters.clicks_this_month)} />
+          <InfoTile label="לקוחות רשומים" value={formatCounter(trafficCounters.registered_customers)} />
+        </div>
+
         <div className="mt-4 sm:mt-5 w-full min-w-0">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={affiliate.trafficByMonth} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" vertical={false} />
-              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }} width={30} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'white',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 25px rgba(0,0,0,0.08)',
-                  direction: 'rtl',
-                }}
-                formatter={(value, name) => {
-                  const v = typeof value === 'number' ? value : Number(value ?? 0)
-                  const label = name === 'clicks' ? 'קליקים' : 'המרות'
-                  return [`${v}`, label]
-                }}
-              />
-              <Line type="monotone" dataKey="clicks" stroke="#0EA5E9" strokeWidth={2} dot={{ r: 2, fill: '#0EA5E9' }} />
-              <Line type="monotone" dataKey="conversions" stroke="var(--color-accent)" strokeWidth={2} dot={{ r: 2, fill: 'var(--color-accent)' }} />
-            </LineChart>
-          </ResponsiveContainer>
+          {trafficLoading ? (
+            <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+              טוען נתוני טראפיק...
+            </div>
+          ) : trafficError ? (
+            <div className="rounded-xl bg-red-50 p-4 text-center text-xs text-red-600">{trafficError}</div>
+          ) : trafficChartData.length === 0 ? (
+            <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+              עדיין אין נתוני קליקים להצגה.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={trafficChartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" vertical={false} />
+                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--color-text-muted)', fontSize: 10 }} width={32} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'white',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '10px',
+                    boxShadow: '0 10px 25px rgba(0,0,0,0.08)',
+                    direction: 'rtl',
+                  }}
+                  formatter={(value, name) => {
+                    const v = typeof value === 'number' ? value : Number(value ?? 0)
+                    const label = name === 'clicks' ? 'קליקים' : 'כניסות מזוהות'
+                    return [`${v}`, label]
+                  }}
+                />
+                <Line type="monotone" dataKey="clicks" stroke="#0EA5E9" strokeWidth={2} dot={{ r: 2, fill: '#0EA5E9' }} />
+                <Line
+                  type="monotone"
+                  dataKey="identified_clicks"
+                  stroke="var(--color-accent)"
+                  strokeWidth={2}
+                  dot={{ r: 2, fill: 'var(--color-accent)' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="mt-5 border-t border-[var(--color-border-light)] pt-4 sm:pt-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between" dir="rtl">
+            <div className="text-right">
+              <h3 className="text-sm sm:text-base font-bold text-[var(--color-text)]">פירוט כניסות מהלינק</h3>
+              <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">מי נכנס, מתי, ומאיזה דף.</p>
+            </div>
+            <span className="text-xs sm:text-sm text-[var(--color-text-muted)]">
+              סה״כ רשומות: {formatCounter(trafficEvents.length)}
+            </span>
+          </div>
+
+          {trafficLoading ? (
+            <div className="mt-4 rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+              טוען רשומות כניסה...
+            </div>
+          ) : trafficError ? (
+            <div className="mt-4 rounded-xl bg-red-50 p-4 text-center text-xs text-red-600">{trafficError}</div>
+          ) : (
+            <>
+              <div className="mt-4 space-y-3 sm:hidden">
+                {trafficEvents.length === 0 ? (
+                  <div className="rounded-xl bg-[var(--color-background)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                    אין עדיין כניסות מתועדות.
+                  </div>
+                ) : (
+                  trafficEvents.map((event) => (
+                    <div key={event.id} className="rounded-xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1 text-right">
+                          <p className="text-sm font-semibold text-[var(--color-text)]">
+                            {event.user_name || 'משתמש אנונימי'}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--color-text-muted)]">{formatDateTime(event.clicked_at)}</p>
+                          <p className="mt-1 text-xs text-[var(--color-text-muted)]" dir="ltr">
+                            {event.user_phone || 'טלפון לא זמין'}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--color-text-muted)] truncate" dir="ltr">
+                            {event.user_email || 'אימייל לא זמין'}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--color-text-muted)] truncate" dir="ltr" title={event.referrer || ''}>
+                            מקור: {event.referrer || 'ישיר'}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--color-text-muted)] truncate" dir="ltr" title={event.landing_path || ''}>
+                            דף: {event.landing_path || '/'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-5 hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-[980px] text-sm" dir="rtl">
+                  <thead>
+                    <tr className="border-t border-[var(--color-border-light)] text-[var(--color-text-muted)]">
+                      <th className="px-3 py-3 text-right font-medium">זמן כניסה</th>
+                      <th className="px-3 py-3 text-right font-medium">משתמש</th>
+                      <th className="px-3 py-3 text-right font-medium">טלפון</th>
+                      <th className="px-3 py-3 text-right font-medium">אימייל</th>
+                      <th className="px-3 py-3 text-right font-medium">מזהה מבקר</th>
+                      <th className="px-3 py-3 text-right font-medium">מקור הפניה</th>
+                      <th className="px-3 py-3 text-right font-medium">דף כניסה</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trafficEvents.map((event) => (
+                      <tr key={event.id} className="border-t border-[var(--color-border-light)]">
+                        <td className="px-3 py-3 text-[var(--color-text-muted)] whitespace-nowrap">
+                          {formatDateTime(event.clicked_at)}
+                        </td>
+                        <td className="px-3 py-3 font-medium text-[var(--color-text)]">
+                          {event.user_name || 'משתמש אנונימי'}
+                        </td>
+                        <td className="px-3 py-3 text-[var(--color-text-muted)]" dir="ltr">
+                          {event.user_phone || '—'}
+                        </td>
+                        <td className="px-3 py-3 text-[var(--color-text-muted)]" dir="ltr">
+                          {event.user_email || '—'}
+                        </td>
+                        <td className="px-3 py-3 text-[var(--color-text-muted)]" dir="ltr">
+                          {event.visitor_id || '—'}
+                        </td>
+                        <td className="px-3 py-3 text-[var(--color-text-muted)] max-w-[220px] truncate" dir="ltr" title={event.referrer || ''}>
+                          {event.referrer || 'ישיר'}
+                        </td>
+                        <td className="px-3 py-3 text-[var(--color-text-muted)] max-w-[220px] truncate" dir="ltr" title={event.landing_path || ''}>
+                          {event.landing_path || '/'}
+                        </td>
+                      </tr>
+                    ))}
+                    {trafficEvents.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-[var(--color-text-muted)]">
+                          אין עדיין כניסות מתועדות.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

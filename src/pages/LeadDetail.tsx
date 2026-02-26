@@ -43,6 +43,12 @@ import {
   type CustomerFileItem,
 } from '@/lib/customer-files-api'
 import { createNotificationForUser, deleteNotification, fetchNotificationsByUser, type NotificationItem } from '@/lib/notifications-api'
+import {
+  createCustomerPaymentForUser,
+  deleteCustomerPayment as deleteCustomerPaymentApi,
+  fetchCustomerPaymentsByUser,
+  type CustomerPaymentItem,
+} from '@/lib/customer-payments-api'
 import { downloadUserSessionPdf } from '@/lib/session-pdf-api'
 import { getCurrentAdminProfile } from '@/lib/admin-profile'
 import type {
@@ -195,7 +201,7 @@ const resolveProcessType = (mortgageType?: MortgageType): BankProcessType =>
 const SYSTEM_SIGNATURE_PREFIX = 'system_signature_'
 const BANK_SIGNATURE_PREFIX = 'bank_signature_'
 
-type ActiveTab = 'questionnaire' | 'files' | 'banks' | 'simulator' | 'updates'
+type ActiveTab = 'questionnaire' | 'payments' | 'files' | 'banks' | 'simulator' | 'updates'
 type SimulatorTab = 'לאומי' | 'מזרחי-טפחות' | 'הצעה נבחרת'
 
 function InfoTile({
@@ -249,6 +255,7 @@ export function LeadDetail() {
     lastName: user?.lastName ?? '',
     phone: user?.phone ?? '',
     email: user?.email ?? '',
+    affiliateId: user?.affiliateId ?? 'organic',
     status: (user?.status ?? 'נרשם') as LeadStatus,
     mortgageType: (user?.mortgageType ?? '-') as MortgageType,
   })
@@ -297,10 +304,10 @@ export function LeadDetail() {
   // Payment form state
   const [paymentForm, setPaymentForm] = useState({
     amount: 0,
-    affiliateId: user?.affiliateId ?? 'organic',
     reference: '',
     note: '',
   })
+  const [paymentSaving, setPaymentSaving] = useState(false)
 
   // Messages/Updates state
   const { templates } = useMessages()
@@ -320,6 +327,7 @@ export function LeadDetail() {
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false)
   const [customerFilesLoading, setCustomerFilesLoading] = useState(false)
   const [bankResponsesLoading, setBankResponsesLoading] = useState(false)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
   const [systemFiles, setSystemFiles] = useState<{ id: string; originalName: string; uploadedAt: string }[]>([])
   const [signatureDownloadLoading, setSignatureDownloadLoading] = useState(false)
   const [signatureModalOpen, setSignatureModalOpen] = useState(false)
@@ -483,6 +491,15 @@ export function LeadDetail() {
     setMessageDraft('')
   }, [user?.id])
 
+  useEffect(() => {
+    if (!user) return
+    setPaymentForm({
+      amount: 0,
+      reference: '',
+      note: '',
+    })
+  }, [user?.id])
+
   const applyCustomerFilesData = (targetUserId: string, data: CustomerFileItem[]) => {
     const systemItems = data.filter((item) => item.original_name.startsWith(SYSTEM_SIGNATURE_PREFIX))
     const bankItems = data.filter((item) => item.original_name.startsWith(BANK_SIGNATURE_PREFIX))
@@ -564,6 +581,32 @@ export function LeadDetail() {
       })
       .finally(() => {
         if (isMounted) setBankResponsesLoading(false)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id, updateUser])
+
+  useEffect(() => {
+    if (!user) return
+    let isMounted = true
+    setPaymentsLoading(true)
+    fetchCustomerPaymentsByUser(user.id)
+      .then((data) => {
+        if (!isMounted) return
+        const mappedPayments = data.map(mapCustomerPaymentItem)
+        const totalAmount = mappedPayments.reduce((sum, payment) => sum + payment.amount, 0)
+        updateUser(user.id, {
+          payments: mappedPayments,
+          paymentAmount: totalAmount,
+        } as Partial<UserRecord>)
+      })
+      .catch((error) => {
+        if (!isMounted) return
+        toast.error(error instanceof Error ? error.message : 'שגיאה בטעינת תשלומים')
+      })
+      .finally(() => {
+        if (isMounted) setPaymentsLoading(false)
       })
     return () => {
       isMounted = false
@@ -723,6 +766,23 @@ export function LeadDetail() {
       })
   }
 
+  const mapCustomerPaymentItem = (item: CustomerPaymentItem) => {
+    const createdDate = new Date(item.created_at)
+    const createdAt = Number.isNaN(createdDate.getTime())
+      ? item.created_at
+      : createdDate.toISOString().slice(0, 10)
+
+    return {
+      id: item.id,
+      amount: Number(item.amount) || 0,
+      affiliateId: item.affiliate_id ?? undefined,
+      affiliateName: item.affiliate_name ?? undefined,
+      reference: item.reference ?? undefined,
+      note: item.note ?? undefined,
+      createdAt,
+    }
+  }
+
   const mapBankResponseItem = (item: BankResponseItem): BankResponseFile => {
     const uploadedDate = new Date(item.uploaded_at)
     const uploadedAt = Number.isNaN(uploadedDate.getTime())
@@ -832,6 +892,35 @@ export function LeadDetail() {
       toast.error(error instanceof Error ? error.message : 'שגיאה בהעלאת קובץ בנק')
     } finally {
       setUploadingBankFile(false)
+    }
+  }
+
+  const handleCreatePayment = async () => {
+    if (!user || paymentForm.amount <= 0) return
+    const selectedAffiliate = user.affiliateId
+      ? affiliates.find((a) => a.id === user.affiliateId)
+      : undefined
+
+    try {
+      setPaymentSaving(true)
+      const created = await createCustomerPaymentForUser(user.id, {
+        amount: paymentForm.amount,
+        affiliateId: user.affiliateId,
+        affiliateName: selectedAffiliate?.name,
+        reference: paymentForm.reference || undefined,
+        note: paymentForm.note || undefined,
+      })
+      const mapped = mapCustomerPaymentItem(created)
+      updateUser(user.id, {
+        payments: [mapped, ...user.payments],
+        paymentAmount: (user.paymentAmount ?? 0) + mapped.amount,
+      } as Partial<UserRecord>)
+      setPaymentForm({ amount: 0, reference: '', note: '' })
+      toast.success('התשלום נשמר בהצלחה')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'שגיאה בשמירת תשלום')
+    } finally {
+      setPaymentSaving(false)
     }
   }
 
@@ -955,6 +1044,7 @@ export function LeadDetail() {
       lastName: user.lastName,
       phone: user.phone,
       email: user.email,
+      affiliateId: user.affiliateId ?? 'organic',
       status: user.status,
       mortgageType: user.mortgageType,
     })
@@ -970,6 +1060,7 @@ export function LeadDetail() {
         last_name: form.lastName.trim(),
         phone: form.phone.trim(),
         mail: form.email.trim(),
+        affiliate_id: form.affiliateId === 'organic' ? null : form.affiliateId,
         status: form.status,
         mortgage_type: mortgageType,
       })
@@ -1153,183 +1244,16 @@ export function LeadDetail() {
 
       {/* Lead info */}
       <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-3 sm:p-5 shadow-sm">
-        <div className="grid grid-cols-2 gap-2 sm:gap-4 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 md:grid-cols-3">
           <InfoTile label="שם" value={fullName} />
           <InfoTile label="טלפון" value={user.phone} valueDir="ltr" />
           <InfoTile label="אימייל" value={user.email} valueDir="ltr" />
           <InfoTile label="מסלול" value={user.mortgageType} />
           <InfoTile label="סטטוס לקוח" value={user.status} />
-        </div>
-
-        {/* Payment section */}
-        <div className="mt-4 pt-4 border-t border-[var(--color-border-light)]">
-          <h3 className="text-sm font-bold text-[var(--color-text)] mb-3">תשלומים</h3>
-
-          <div className="flex flex-col gap-3 bg-[var(--color-background)] rounded-xl p-3">
-            {/* Payment form */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* Affiliate selection */}
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-[var(--color-text-muted)]">מקור הליד</span>
-                <DropdownSelect<string>
-                  value={paymentForm.affiliateId}
-                  onChange={(v) => setPaymentForm((p) => ({ ...p, affiliateId: v }))}
-                  options={[
-                    { value: 'organic', label: 'אורגני' },
-                    ...affiliates.map((a) => ({ value: a.id, label: a.name })),
-                  ]}
-                  buttonClassName="w-full justify-between bg-white text-xs"
-                  contentAlign="end"
-                />
-              </div>
-
-              {/* Payment amount */}
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-[var(--color-text-muted)]">סכום (₪)</span>
-                <input
-                  type="number"
-                  value={paymentForm.amount}
-                  onChange={(e) => setPaymentForm((p) => ({ ...p, amount: Number(e.target.value) }))}
-                  className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
-                  placeholder="סכום"
-                />
-              </div>
-
-              {/* Reference */}
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-[var(--color-text-muted)]">מספר אסמכתא</span>
-                <input
-                  type="text"
-                  value={paymentForm.reference}
-                  onChange={(e) => setPaymentForm((p) => ({ ...p, reference: e.target.value }))}
-                  className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
-                  placeholder="אסמכתא"
-                />
-              </div>
-
-              {/* Note */}
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-[var(--color-text-muted)]">הערה</span>
-                <input
-                  type="text"
-                  value={paymentForm.note}
-                  onChange={(e) => setPaymentForm((p) => ({ ...p, note: e.target.value }))}
-                  className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
-                  placeholder="הערה"
-                />
-              </div>
-            </div>
-
-            {/* Save button */}
-            <div className="flex justify-start">
-              <Button
-                variant="accent"
-                disabled={paymentForm.amount <= 0}
-                onClick={() => {
-                  const selectedAffiliate = affiliates.find((a) => a.id === paymentForm.affiliateId)
-                  const newPayment = {
-                    id: `${user.id}-pay-${Date.now()}`,
-                    amount: paymentForm.amount,
-                    affiliateId: paymentForm.affiliateId === 'organic' ? undefined : paymentForm.affiliateId,
-                    affiliateName: paymentForm.affiliateId === 'organic' ? undefined : selectedAffiliate?.name,
-                    reference: paymentForm.reference || undefined,
-                    note: paymentForm.note || undefined,
-                    createdAt: new Date().toISOString().slice(0, 10),
-                  }
-                  updateUser(user.id, {
-                    payments: [newPayment, ...user.payments],
-                    affiliateId: paymentForm.affiliateId === 'organic' ? undefined : paymentForm.affiliateId,
-                    paymentAmount: (user.paymentAmount ?? 0) + paymentForm.amount,
-                  } as Partial<UserRecord>)
-                  setPaymentForm({ amount: 0, affiliateId: user.affiliateId ?? 'organic', reference: '', note: '' })
-                  toast.success('התשלום נשמר בהצלחה')
-                }}
-              >
-                <AnimatedIcon icon={Plus} size={18} variant="lift" />
-                שמור תשלום
-              </Button>
-            </div>
-
-            {/* Payments History Table */}
-            {user.payments.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-[var(--color-border-light)]">
-                <h4 className="text-sm font-bold text-[var(--color-text)] mb-3">היסטוריית תשלומים</h4>
-
-                {/* Mobile Card View */}
-                <div className="block sm:hidden space-y-2">
-                  {user.payments.map((payment) => (
-                    <div key={payment.id} className="rounded-lg border border-[var(--color-border-light)] bg-white p-3">
-                      <div className="flex flex-row-reverse items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1 text-right">
-                          <div className="flex items-center gap-2 justify-end">
-                            <span className="text-sm font-semibold text-[var(--color-text)]">
-                              {formatCurrencyILS(payment.amount)}
-                            </span>
-                            <span className="text-xs text-[var(--color-text-muted)]">{payment.createdAt}</span>
-                          </div>
-                          <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                            {payment.affiliateName ?? 'אורגני'}
-                          </p>
-                          {payment.reference && (
-                            <p className="text-xs text-[var(--color-text-muted)]">אסמכתא: {payment.reference}</p>
-                          )}
-                          {payment.note && (
-                            <p className="text-xs text-[var(--color-text-muted)]">הערה: {payment.note}</p>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => setDeleteConfirm({ open: true, type: 'clientPayment', id: payment.id })}
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-danger)] hover:bg-red-50"
-                          aria-label="מחיקה"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Desktop Table View */}
-                <div className="hidden sm:block overflow-x-auto rounded-lg border border-[var(--color-border-light)]">
-                  <table className="w-full text-sm" dir="rtl">
-                    <thead>
-                      <tr className="bg-white text-[var(--color-text-muted)]">
-                        <th className="px-3 py-2 text-right font-medium">תאריך</th>
-                        <th className="px-3 py-2 text-right font-medium">סכום</th>
-                        <th className="px-3 py-2 text-right font-medium">אפילייט</th>
-                        <th className="px-3 py-2 text-right font-medium">אסמכתא</th>
-                        <th className="px-3 py-2 text-right font-medium">הערה</th>
-                        <th className="px-3 py-2 text-center font-medium w-[60px]">מחיקה</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {user.payments.map((payment) => (
-                        <tr key={payment.id} className="border-t border-[var(--color-border-light)] bg-white">
-                          <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.createdAt}</td>
-                          <td className="px-3 py-2 font-medium text-[var(--color-text)]">
-                            {formatCurrencyILS(payment.amount)}
-                          </td>
-                          <td className="px-3 py-2 text-[var(--color-text)]">{payment.affiliateName ?? 'אורגני'}</td>
-                          <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.reference ?? '-'}</td>
-                          <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.note ?? '-'}</td>
-                          <td className="px-3 py-2 text-center">
-                            <button
-                              onClick={() => setDeleteConfirm({ open: true, type: 'clientPayment', id: payment.id })}
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white hover:bg-red-50 text-[var(--color-danger)]"
-                              aria-label="מחיקה"
-                              title="מחיקה"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
+          <InfoTile
+            label="מקור ליד"
+            value={user.affiliateId ? (affiliates.find((a) => a.id === user.affiliateId)?.name ?? 'אורגני') : 'אורגני'}
+          />
         </div>
       </div>
 
@@ -1369,6 +1293,12 @@ export function LeadDetail() {
               className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
             >
               עדכונים
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="payments"
+              className="rounded-full px-3 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-[var(--color-text-muted)] data-[state=active]:bg-[var(--color-background)] data-[state=active]:text-[var(--color-text)]"
+            >
+              תשלומים
             </Tabs.Trigger>
           </Tabs.List>
         </div>
@@ -1466,6 +1396,146 @@ export function LeadDetail() {
                 </>
               )}
             </div>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="payments" className="mt-4 sm:mt-5">
+          <div className="rounded-2xl sm:rounded-3xl border border-[var(--color-border)] bg-white p-4 sm:p-6 shadow-sm">
+            <h2 className="text-base sm:text-lg font-bold text-[var(--color-text)]">תשלומים</h2>
+            <p className="mt-1 text-xs sm:text-sm text-[var(--color-text-muted)]">ניהול תשלומים והיסטוריית תשלומים.</p>
+
+            {paymentsLoading ? (
+              <div className="mt-4 sm:mt-5 rounded-2xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+                טוען תשלומים...
+              </div>
+            ) : (
+              <div className="mt-4 sm:mt-5 flex flex-col gap-3 rounded-2xl border border-[var(--color-border-light)] bg-[var(--color-background)] p-3 sm:p-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-[var(--color-text-muted)]">סכום (₪)</span>
+                  <input
+                    type="number"
+                    value={paymentForm.amount}
+                    onChange={(e) => setPaymentForm((p) => ({ ...p, amount: Number(e.target.value) }))}
+                    className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="סכום"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-[var(--color-text-muted)]">מספר אסמכתא</span>
+                  <input
+                    type="text"
+                    value={paymentForm.reference}
+                    onChange={(e) => setPaymentForm((p) => ({ ...p, reference: e.target.value }))}
+                    className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="אסמכתא"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-[var(--color-text-muted)]">הערה</span>
+                  <input
+                    type="text"
+                    value={paymentForm.note}
+                    onChange={(e) => setPaymentForm((p) => ({ ...p, note: e.target.value }))}
+                    className="h-10 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none"
+                    placeholder="הערה"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-start">
+                <Button
+                  variant="accent"
+                  disabled={paymentSaving || paymentForm.amount <= 0}
+                  onClick={() => {
+                    void handleCreatePayment()
+                  }}
+                >
+                  <AnimatedIcon icon={Plus} size={18} variant="lift" />
+                  {paymentSaving ? 'שומר...' : 'שמור תשלום'}
+                </Button>
+              </div>
+
+              {user.payments.length > 0 && (
+                <div className="mt-4 border-t border-[var(--color-border-light)] pt-4">
+                  <h4 className="mb-3 text-sm font-bold text-[var(--color-text)]">היסטוריית תשלומים</h4>
+
+                  <div className="block space-y-2 sm:hidden">
+                    {user.payments.map((payment) => (
+                      <div key={payment.id} className="rounded-lg border border-[var(--color-border-light)] bg-white p-3">
+                        <div className="flex flex-row-reverse items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <span className="text-sm font-semibold text-[var(--color-text)]">
+                                {formatCurrencyILS(payment.amount)}
+                              </span>
+                              <span className="text-xs text-[var(--color-text-muted)]">{payment.createdAt}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                              {payment.affiliateName ?? 'אורגני'}
+                            </p>
+                            {payment.reference && (
+                              <p className="text-xs text-[var(--color-text-muted)]">אסמכתא: {payment.reference}</p>
+                            )}
+                            {payment.note && (
+                              <p className="text-xs text-[var(--color-text-muted)]">הערה: {payment.note}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => setDeleteConfirm({ open: true, type: 'clientPayment', id: payment.id })}
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-danger)] hover:bg-red-50"
+                            aria-label="מחיקה"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="hidden overflow-x-auto rounded-lg border border-[var(--color-border-light)] sm:block">
+                    <table className="w-full text-sm" dir="rtl">
+                      <thead>
+                        <tr className="bg-white text-[var(--color-text-muted)]">
+                          <th className="px-3 py-2 text-right font-medium">תאריך</th>
+                          <th className="px-3 py-2 text-right font-medium">סכום</th>
+                          <th className="px-3 py-2 text-right font-medium">אפילייט</th>
+                          <th className="px-3 py-2 text-right font-medium">אסמכתא</th>
+                          <th className="px-3 py-2 text-right font-medium">הערה</th>
+                          <th className="w-[60px] px-3 py-2 text-center font-medium">מחיקה</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {user.payments.map((payment) => (
+                          <tr key={payment.id} className="border-t border-[var(--color-border-light)] bg-white">
+                            <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.createdAt}</td>
+                            <td className="px-3 py-2 font-medium text-[var(--color-text)]">
+                              {formatCurrencyILS(payment.amount)}
+                            </td>
+                            <td className="px-3 py-2 text-[var(--color-text)]">{payment.affiliateName ?? 'אורגני'}</td>
+                            <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.reference ?? '-'}</td>
+                            <td className="px-3 py-2 text-[var(--color-text-muted)]">{payment.note ?? '-'}</td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => setDeleteConfirm({ open: true, type: 'clientPayment', id: payment.id })}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-danger)] hover:bg-red-50"
+                                aria-label="מחיקה"
+                                title="מחיקה"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              </div>
+            )}
           </div>
         </Tabs.Content>
 
@@ -2850,6 +2920,22 @@ export function LeadDetail() {
                 />
               </div>
             </div>
+            <div>
+              <label className="text-sm font-medium text-[var(--color-text)]">מקור ליד</label>
+              <div className="mt-2">
+                <DropdownSelect<string>
+                  value={form.affiliateId}
+                  onChange={(v) => setForm((p) => ({ ...p, affiliateId: v }))}
+                  options={[
+                    { value: 'organic', label: 'אורגני' },
+                    ...affiliates.map((a) => ({ value: a.id, label: a.name })),
+                  ]}
+                  buttonClassName="w-full justify-between bg-white"
+                  className="w-full"
+                  contentAlign="end"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="mt-6 flex flex-col-reverse sm:flex-row items-center justify-end gap-2">
@@ -2932,12 +3018,19 @@ export function LeadDetail() {
             } as Partial<UserRecord>)
             toast.success('נמחק')
           } else if (deleteConfirm.id && deleteConfirm.type === 'clientPayment') {
-            const paymentToDelete = user.payments.find((p) => p.id === deleteConfirm.id)
-            updateUser(user.id, {
-              payments: user.payments.filter((x) => x.id !== deleteConfirm.id),
-              paymentAmount: Math.max(0, (user.paymentAmount ?? 0) - (paymentToDelete?.amount ?? 0)),
-            } as Partial<UserRecord>)
-            toast.success('התשלום נמחק')
+            const paymentId = deleteConfirm.id
+            deleteCustomerPaymentApi(paymentId)
+              .then(() => {
+                const paymentToDelete = user.payments.find((p) => p.id === paymentId)
+                updateUser(user.id, {
+                  payments: user.payments.filter((x) => x.id !== paymentId),
+                  paymentAmount: Math.max(0, (user.paymentAmount ?? 0) - (paymentToDelete?.amount ?? 0)),
+                } as Partial<UserRecord>)
+                toast.success('התשלום נמחק')
+              })
+              .catch((error) => {
+                toast.error(error instanceof Error ? error.message : 'שגיאה במחיקת תשלום')
+              })
           }
         }}
       />
